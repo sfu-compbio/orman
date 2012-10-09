@@ -3,6 +3,7 @@
 #ifndef INTERVAL_H__
 #define INTERVAL_H__
 
+#include <inttypes.h>
 #include <vector>
 #include <utility>
 
@@ -51,6 +52,6 @@ public:
 	void enumerate (const interval &p, std::vector<T> &result);
 };
 
-#include "interval.cc"
+#include "interval.tc"
 
 #endif

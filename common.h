@@ -16,6 +16,7 @@
 #include <cstdlib>
 #include <cctype>
 #include <ctime>
+#include <string>
 #include <cstring>
 #include <algorithm>
 
@@ -48,6 +49,7 @@
 const int MAX_BUFFER = 25000;
 uint64_t zaman_start();
 uint64_t zaman_last();
+std::string numtostr(int n);
 
 #endif // COMMON_H__
 

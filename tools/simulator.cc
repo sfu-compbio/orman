@@ -34,15 +34,26 @@ void parse_fasta (const char *fasta_file) {
 
 /***************************************************************************************/
 
+struct exon {
+	uint32_t first, second;
+	int id;
+
+	exon(int i, uint32_t f, uint32_t s) :
+		id(i), first(f), second(s){}
+
+	bool operator< (const exon & e) const { 
+		return first < e.first || (first == e.first && second < e.second);
+	}
+};
 struct transcript {
-	map<int, pair<int, int> > exons;
+	vector<exon> exons;
 	string chromosome, gene, name;
 	char strand;
-	int expression;
+	int expression, length;
 	bool partial;
 
 	transcript() :
-		expression(0), partial(0), strand('+') {}
+		expression(0), partial(0), length(0), strand('+') {}
 };
 map<string, transcript>	  transcripts;
 map<string, set<string> > genes;
@@ -108,9 +119,11 @@ void parse_gtf (const char *gtf_file) {
 			int exon_id = atoi(attributes["exon_number"].c_str());
 			// if (exon_id >= t.exons.size())
 			//	t.exons.resize(exon_id + 1);
-			t.exons[exon_id] = make_pair(gtf_start, gtf_end);
+			t.exons.push_back(exon(exon_id, gtf_start, gtf_end));
 		}
 	}
+	foreach (t, transcripts)
+		sort(t->second.exons.begin(), t->second.exons.end());
 	E("\tRead %'d transcripts\n", transcripts.size());
 
 	fclose(fi);
@@ -124,9 +137,11 @@ void parse_expression (const char *exp_file) {
 
 	char buffer[MAX_BUFFER], bf[MAX_BUFFER];
 	int  exp,
-		  count = 0;
+		  count = 0,
+		  length = 0,
+		  use, n_ex;
 	while (fgets(buffer, MAX_BUFFER, fi)) {
-		sscanf(buffer, "%s %d", bf, &exp);
+		sscanf(buffer, "%s %d %d %d %d", bf, &exp, &use, &length, &n_ex);
 		auto it = transcripts.find(bf);
 		if (it == transcripts.end()) {
 			E("EXP: Transcript %s not found\n", bf);
@@ -143,7 +158,7 @@ void parse_expression (const char *exp_file) {
 
 /***************************************************************************************/
 
-int xoverlap(const pair<int, int> &a, const pair<int, int> &b) {
+int xoverlap(const exon &a, const exon &b) {
 	int st = max(a.first, b.first);
 	int ed = min(a.second, b.second);
 	if (ed < st) return 0;
@@ -158,11 +173,11 @@ bool check (transcript *tp, int skip_pos) {
 		if (tp->exons.size() - 1 != tx.exons.size()) // ok
 			continue;
 
-		int tpi = 1, txi = 1; // they start at 1..x
+		int tpi = 0, txi = 0;
 		int overlap = 0, total = 0;
 		for (;;) {
 			if (tpi == skip_pos) tpi++;
-			if (tpi == tp->exons.size() + 1) break;
+			if (tpi == tp->exons.size()) break;
 			int o = xoverlap(tp->exons[tpi], tx.exons[txi]);
 			if (!o) {
 				overlap = 0;
@@ -178,12 +193,17 @@ bool check (transcript *tp, int skip_pos) {
 	return 1;
 }
 
-void select_partials (int percent = 10) {
+void select_partials (int percent, int read_size, int expression_threshold = 3) {
 	int selected = 0;
 	map<string, transcript> new_transcripts;
 	vector<transcript*> tp;
-	foreach (t, transcripts) if (t->second.expression && t->second.exons.size() > 1) 
-		tp.push_back(& t->second);
+
+	//(number of reads* read length) >= x * the length of the isoform (where x>=3).
+	foreach (t, transcripts) 
+		if (t->second.expression && t->second.exons.size() > 2 && // at least 3 sz 
+				t->second.expression * read_size >= expression_threshold * t->second.length)
+			tp.push_back(& t->second);
+	E("\t%'d out of %'d isoforms taken into consideration\n", tp.size(), transcripts.size());
 
 	int estimated = 0.9 * (percent / 100.0) * tp.size();
 	int found = 0, treshold_c = 0, fails = 0;
@@ -192,10 +212,12 @@ void select_partials (int percent = 10) {
 		
 		transcript *t = tp[ rand() % tp.size() ];
 		if (t->partial) continue;
-		int p = 1 + rand() % t->exons.size();
+
+
+		int p = 1 + rand() % (t->exons.size() - 2); // no first/last
 
 		if (check(t, p)) {
-			t->exons.erase(p);
+			t->exons.erase(t->exons.begin() + p);
 			t->partial = 1;
 			found++;
 		}
@@ -209,16 +231,20 @@ void select_partials (int percent = 10) {
 		treshold_c++;
 		
 		transcript *t = tp[ rand() % tp.size() ];
-		if (t->partial) continue;
-		int p = rand() % t->exons.size();
+		if (t->partial || t->exons.size() <= 3) // at least 4 exons for this event
+			continue;
+		int p = 1 + rand() % (t->exons.size() - 3); // no first/last 2
 
 		if (check(t, p) && check(t, p + 1)) {
-			transcript &tx = (new_transcripts[t->name + "_N"] = *t);
-			tx.exons.erase(p + 1); 			tx.partial = 1;
+			transcript tx = *t;
+			tx.exons.erase(tx.exons.begin() + (p + 1)); 			
+			tx.partial = 1;
 			total_reads += tx.expression;
 			found++;
-	
-			t->exons.erase(p);			t->partial = 1;
+	 		new_transcripts[t->name + "_N"] = tx;
+
+			t->exons.erase(t->exons.begin() + p);
+			t->partial = 1;
 		}
 		else fails++;
 	}
@@ -254,8 +280,8 @@ void generate (const string &t_id, const transcript &t, int read_size) {
 
 	vector<int> positions;
 	foreach (e, t.exons) {
-		sequence += genome.substr(e->second.first + offset, e->second.second - e->second.first + 1);
-		for (int i = e->second.first; i <= e->second.second; i++)
+		sequence += genome.substr(e->first + offset, e->second - e->first + 1);
+		for (int i = e->first; i <= e->second; i++)
 			positions.push_back(i);
 	}
 
@@ -298,9 +324,10 @@ end:
 }
 
 void generate (int read_size = 75, int novel_percentage = 10, int error_percentage = 1) {
-	select_partials(novel_percentage);
+	select_partials(novel_percentage, read_size);
 	error_limit = (error_percentage / 100.0) * total_reads; 
 
+	// error curve polynomial ^^
 	double curve[MAX_BUFFER];
 	for (int x = 0; x < 100; x++) {
 		curve[x] = - 8.34987e-14 * pow(x, 7) + 3.00017e-11 * pow(x, 6) - 4.30349e-9 * pow(x, 5) + 
@@ -315,6 +342,8 @@ void generate (int read_size = 75, int novel_percentage = 10, int error_percenta
 		while (p && i > ceil(curve[p])) p++;
 		error_position[i] = p * (read_size / 100.0);
 	}
+
+	// generate transcription levels
 	foreach(t, transcripts) if (t->second.expression) { 
 		generate(t->first, t->second, read_size);
 	}
@@ -333,7 +362,7 @@ void generate (int read_size = 75, int novel_percentage = 10, int error_percenta
 int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
 	srand(time(0));
-	E("Usage: simulator 1:Reference-FASTA 2:Reference-GTF 3:Reference-Expression-Levels 4:Result-GTF\nResult Output: stdout\n");
+	E("Usage: simulator 1:Reference-FASTA 2:Reference-GTF 3:Reference-Expression-Levels 4:Result-GTF 5:Read-length\nResult Output: stdout\n");
 
 	
 	char buffer[MAX_BUFFER];
@@ -351,15 +380,15 @@ int main (int argc, char **argv) {
 	E("done in %d seconds!\n", zaman_last());
 
 	E("Simulating ...\n");
-	generate();
+	generate(atoi(argv[5]));
 	E("done in %d seconds!\n", zaman_last());
 
 	FILE *fo = fopen(argv[4] /* "out.gtf" */, "w");
 	foreach (t, transcripts) {
 		foreach (e, t->second.exons) 
-			fprintf(fo, "%s protein_coding exon %d %d . %c . gene_id \"%s\"; transcript_id \"%s\"; exon_id \"%d\" novel \"%s\";\n",
-					t->second.chromosome.c_str(), e->second.first, e->second.second, t->second.strand,
-					t->second.gene.c_str(), t->first.c_str(), e->first, t->second.partial ? "yes" : "no");
+			fprintf(fo, "%s protein_coding exon %u %u . %c . gene_id \"%s\"; transcript_id \"%s\"; exon_number \"%d\" novel \"%s\";\n",
+					t->second.chromosome.c_str(), e->first, e->second, t->second.strand,
+					t->second.gene.c_str(), t->first.c_str(), e->id, t->second.partial ? "yes" : "no");
 	}
 	fclose(fo);
 
