@@ -104,8 +104,8 @@ genome_annotation::gene *genome_annotation::find_gene (uint32_t pos, int chr) {
 	}
 
 	ex.clear();
-	exon_tree.enumerate(pos - 5, ex);
-	exon_tree.enumerate(pos + 5, ex);
+	exon_tree.enumerate(pos - 4, ex);
+	exon_tree.enumerate(pos + 4, ex);
 	foreach (e, ex) {
 		if ((*e)->transcript->gene->chromosome == chr)
 			return (*e)->transcript->gene;
