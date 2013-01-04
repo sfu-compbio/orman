@@ -1,7 +1,7 @@
 /// 786
 
 #include "common.h"
-#include "uniqorn.h"
+#include "orman.h"
 #include <boost/heap/fibonacci_heap.hpp>
 // #include <ilcplex/ilocplex.h>
 
@@ -184,7 +184,7 @@ int set_cover (int read_length) {
 
 		foreach (pos, h.t->fatreads) 
 			foreach (r, pos->second) /* in fatreads */ if (!read_visited[*r]) {
-				fatreads[*r].solution[ h.t->id ] += fatreads[*r].reads.size(); // assign ALL to this set
+			//	fatreads[*r].solution[ h.t->id ] += fatreads[*r].reads.size(); // assign ALL to this set
 
 				foreach (s, fatreads[*r].clusters) if (s->first != h.t->id) {
 					(*heap_handles[s->first]).cardinality -= fatreads[*r].reads.size();
@@ -220,6 +220,33 @@ int set_cover (int read_length) {
 	E("\t%'d non-covered fatreads (%'d reads)\n", not_covered, ncr);
 
 	return mincover;
+}
+
+void probabilistic_assign (void) {
+	foreach (fr, fatreads) {
+		int total = 0;
+		// count -> set
+		vector<pair<int,int> >  counts;
+		foreach (c, fr->clusters) 
+			if (clusters[c->first].covered) {
+				// count number of reads this set covers
+				int cnt = 0;
+				foreach (pos, clusters[c->first].fatreads) 
+					foreach (fx, pos->second) // in fatreads
+						cnt += fatreads[*fx].reads.size();
+				total += cnt;
+				counts.push_back(make_pair(cnt, c->first));
+			}
+
+		sort(counts.begin(), counts.end());
+		int remain = total;
+		for (int i = 0; i < counts.size(); i++) {
+			int r = (counts[i].first * fr->reads.size()) / total;
+			fr->solution[ counts[i].second ] += r;
+			remain -= r;
+		}
+		fr->solution[ counts[counts.size() - 1].second ] += remain;
+	}
 }
 
 /*****************************************************************************************/
@@ -691,14 +718,18 @@ void update_solution (map<string, struct read> &reads) {
 //	fclose(fo);
 }
 
-void do_uniqorn (const genome_annotation &ga, const set<partial_transcript> &partials, map<string, struct read> &reads, int read_length) {
-	E("Initializing UNIQORN; read length is %d ...\n", read_length);
+void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, map<string, struct read> &reads, int read_length) {
+	E("Initializing ORMAN; read length is %d ...\n", read_length);
 	initialize_structures(partials, reads);
 	E("done in %d seconds!\n", zaman_last());
 
 	E("Set cover ...\n");
 	int n = set_cover(read_length);
 	E("\t%'d out of %'d clusters selected\ndone in %d seconds!\n", n, clusters.size(), zaman_last());
+
+	E("Probabilistic assign ...\n");
+	probabilistic_assign();
+	E("done in %d seconds!\n", zaman_last());
 
 	E("Connected component decomposition ...\n");
 	connected_components();

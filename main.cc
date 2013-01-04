@@ -5,12 +5,12 @@
 #include "interval.h"
 #include "rescue.h"
 #include "partial.h"
-#include "uniqorn.h"
+#include "orman.h"
 
 using namespace std;
 
-const char *DEBUG_LOG_FILE = "uniqorn.dbg";
-const char *LOG_FILE = "uniqorn.log";
+const char *DEBUG_LOG_FILE = "orman.dbg";
+const char *LOG_FILE = "orman.log";
 
 typedef genome_annotation::transcript transcript;
 typedef genome_annotation::exon exon;
@@ -366,8 +366,8 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 
 int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
-	E("Behold! Uniqorn is starting!\n\tUsage: uniqorn -g[gtf] -s[sam] -m[mode:(single|rescue|uniqorn)] [new_sam]\n");
-
+	E("Behold! Former Uniqorn Republic of Orman is starting!\n\tUsage: orman -g[gtf] -s[sam] -m[mode:(single|rescue|orman)] [new_sam]\n");
+	E("\tCompile time: %s\n", COMPILE_TIME);	
 	freopen(DEBUG_LOG_FILE, "w", stdout);
 
 	char sam[MAX_BUFFER],
@@ -392,8 +392,8 @@ int main (int argc, char **argv) {
 		do_rescue(ga, reads);
 	else if (!strcmp(mode, "single"))
 		do_single(ga, reads);
-	else if (!strcmp(mode, "uniqorn"))
-		do_uniqorn(ga, partial_transcripts, reads, read_length);
+	else if (!strcmp(mode, "orman"))
+		do_orman(ga, partial_transcripts, reads, read_length);
 	else {
 		E("Unknown mode %s!\n");
 		exit(1);

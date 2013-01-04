@@ -6,15 +6,15 @@ CPLEXLIB=$(CPLEXDIR)/cplex/lib/x86-64_sles10_4.1/static_pic
 CONCERTINC=$(CPLEXDIR)/concert/include
 CONCERTLIB=$(CPLEXDIR)/concert/lib/x86-64_sles10_4.1/static_pic
 CPLEXFLAGS=-DIL_STD -I $(CPLEXINC) -I $(CONCERTINC) -L $(CPLEXLIB) -L $(CONCERTLIB) -Wl,--start-group -lconcert -lilocplex -lcplex -lpthread -lm -DNDEBUG
+DATE=$(shell date)
 
 CC=g++
-
-CFLAGS=-c -g -O3 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I boost150 -std=gnu++0x
+CFLAGS=-c -g -O3 -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I boost150 -std=gnu++0x -DCOMPILE_TIME='"$(DATE)"'
 LDFLAGS=-g -lm -lpthread 
 
 OBJECTS=$(SOURCES:.cc=.o)
 SOURCES=$(wildcard *.cc)
-EXECUTABLE=uniqorn
+EXECUTABLE=orman
 
 all: $(SOURCES) $(EXECUTABLE) 
 
