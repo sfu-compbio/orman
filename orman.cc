@@ -239,7 +239,7 @@ void probabilistic_assign (void) {
 			}
 
 		sort(counts.begin(), counts.end());
-		int remain = total;
+		int remain = fr->reads.size();
 		for (int i = 0; i < counts.size(); i++) {
 			int r = (counts[i].first * fr->reads.size()) / total;
 			fr->solution[ counts[i].second ] += r;
