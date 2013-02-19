@@ -10,7 +10,7 @@
 using namespace std;
 
 const char *DEBUG_LOG_FILE = "orman.dbg";
-const char *LOG_FILE = "orman.log";
+const char *LOG_FILE 		= "orman.log";
 
 typedef genome_annotation::transcript transcript;
 typedef genome_annotation::exon exon;
@@ -27,9 +27,11 @@ struct indel {
 		first(f), second(s), type(t) {}
 };
 
+int read_length = 0;
 
 /*******************************************************************************/
 
+set<partial_transcript_single> partial_transcripts_single;
 set<partial_transcript> partial_transcripts;
 map<string, struct read> reads;
 genome_annotation ga;
@@ -75,7 +77,7 @@ bool parse_cigar (uint32_t start_pos, const char *cigar, const char *read, vecto
 
 /*******************************************************************************/
 
-const partial_transcript *get_partial_transcript (transcript *t, const vector<exon*> &exons, const vector<interval> &parts, const vector<indel> &indels, int &starting_position) {
+const partial_transcript_single *get_partial_transcript (transcript *t, const vector<exon*> &exons, const vector<interval> &parts, const vector<indel> &indels, int &starting_position) {
 	// disregard junk
 	if (exons.size() == 0 || parts.size() == 0) {
 		L("exsz %d pasz %d", exons.size(), parts.size());
@@ -157,69 +159,105 @@ const partial_transcript *get_partial_transcript (transcript *t, const vector<ex
 		}
 	}
 
-	partial_transcript pt(t, signature, length, weight);
-	auto pti = partial_transcripts.insert(pt);
+	partial_transcript_single pt(t, signature, length, weight);
+	auto pti = partial_transcripts_single.insert(pt);
 	return &(* pti.first);
 }
 
-void parse_read (const string &name, int line, uint32_t start_pos, int chromosome, const char *cigar, const char *read) {
-	vector<interval> parts;
-	vector<indel>    indels;
-	parse_cigar(start_pos, cigar, read, parts, indels);
+/****************************************/
 
+void trimx (vector<interval> &parts) {
+	if (parts.size() == 0)
+		return;
 	if (parts[0].second - parts[0].first + 1 < 4)
 		parts = vector<interval>(parts.begin() + 1, parts.end());
 	if (parts[parts.size() - 1].second - parts[parts.size() - 1].first + 1 < 4)
 		parts.pop_back();
+}
 
-	map<transcript*, vector<exon*> > candidates;
+void makecand (const vector<interval> &parts, int chromosome, map<transcript*, vector<exon*> > &candidates) {
 	foreach (pi, parts) {
 		vector<exon*> exons;
 		ga.get_exons(*pi, exons);
-		foreach (ei, exons)
+		foreach (ei, exons) 
 			if ((*ei)->transcript->gene->chromosome == chromosome) {
 				vector<exon*> &vx = candidates[(*ei)->transcript];
-				
 				if (vx.size() == 0 || vx[vx.size() - 1] != *ei) // no repetitions!
 					vx.push_back(*ei);
 			}
 	}
-	foreach (ci, candidates) {
-		int starting_position;
+}
 
-		L("%40s ", name.c_str());
-		const partial_transcript *pt = get_partial_transcript(
-				ci->first, ci->second, parts, indels, starting_position);
+void parse_read (const string &name, int line1, uint32_t start_pos1, int chromosome1, const char *cigar1, const char *read1,
+					  							 int line2, uint32_t start_pos2, int chromosome2, const char *cigar2, const char *read2) {
+	vector<interval> parts1,  parts2;
+	vector<indel>    indels1, indels2;
+	parse_cigar(start_pos1, cigar1, read1, parts1, indels1);
+	if (line2 >= 0) parse_cigar(start_pos2, cigar2, read2, parts2, indels2);
+
+	map<transcript*, vector<exon*> > candidates1, candidates2;
+	trimx(parts1); makecand(parts1, chromosome1, candidates1);
+	trimx(parts2); makecand(parts2, chromosome2, candidates2);
+	
+	foreach (ci1, candidates1) foreach (ci2, candidates2) {
+		int starting_position1 = 0, 
+			 starting_position2 = 0;
+
+	//	L("%40s ", name.c_str());
+		const partial_transcript_single *pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
+		const partial_transcript_single *pt2 = line2 >= 0 ? get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2) : 0;
 		
-		if (pt) L(" %20s %20s %10d ", pt->transcript->name.c_str(), pt->signature.c_str(), starting_position); 
+/*		if (pt) L(" %20s %20s %10d ", pt->transcript->name.c_str(), pt->signature.c_str(), starting_position); 
 		L(" cigar %s tr %s ex ", cigar, ci->first->name.c_str()); foreach(e, ci->second) L("(%d,%d) ",(*e)->start, (*e)->end); L("parts "); foreach(p,parts)L("(%d %d) ", p->first, p->second); 
-		L("\n");
+		L("\n");*/
 
-		if (pt) {
+	// right now strand/1 HAS TO BE VALID!
+		if (pt1) { 		
 		//	if (reads[name].entries.find(line)!=reads[name].entries.end())
 		//		E("OOOOO! %s %d\n",name.c_str(), line);
-			reads[name].entries[read::read_key(line, pt)] = 
-				read::read_entry(chromosome, start_pos, pt, starting_position); 
+			auto pti = partial_transcripts.insert(partial_transcript(pt1, pt2));
+			const partial_transcript *pt = &(* pti.first);
+
+			reads[name].entries[read::read_key(line1, line2, pt)] = make_pair(
+				read::read_entry(chromosome1, start_pos1, pt1, starting_position1), 
+				read::read_entry(chromosome2, start_pos2, pt2, starting_position2)
+			);
 		}
 	}
 }
 
 
 /*******************************************************************************/
-/*
+
 string fixname (const char *c, uint32_t sam_flag) {
-//	return string(c);
 	return string(c) + "/" + string((sam_flag & 0x40) ? "1" : "2");
 }
-*/
-string fixname (const char *c, const char *d) {
-//	return string(c);
-	return string(c) + (strlen(d)==76 ? "/1" : "/2");
-//	return string(c) + "/" + string((sam_flag & 0x40) ? "1" : "2");
-}
+
+struct key___ {
+	string name, nextchr;
+	int nextchrpos;
+
+	key___(const string &n, const string &nc, int np) :
+		name(n), nextchr(nc), nextchrpos(np) {}
+	bool operator< (const key___& k) const {
+		return (name<k.name || (name==k.name && nextchr<k.nextchr));
+	}
+};
+struct read___ {
+	string name, cigar, read;
+	int chr, line;
+	uint32_t sam_pos, sam_flag;
+
+	read___ () {}
+	read___ (const string &n, int l, int sp, uint32_t sf, int c, const string &cc, const string &r) :
+		name(n), line(l), sam_pos(sp), sam_flag(sf), chr(c), cigar(cc), read(r) {}
+};
 
 void parse_sam (const char *sam_file) {
 	FILE *fi = fopen(sam_file, "r");
+
+	// what if sam file hates us?
+	map<key___, read___> short_index;
 
 	char 		buffer[MAX_BUFFER];
 	char 		sam_name[MAX_BUFFER],
@@ -238,12 +276,34 @@ void parse_sam (const char *sam_file) {
 
 		sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
-		string name = fixname(sam_name, sam_read); //sam_flag);
+
+		read_length = max(read_length, (int)strlen(sam_read));
 		int chr = ga.get_chromosome(sam_rname);
-		if (chr != -1) 
-			parse_read(name, line, sam_pos, chr, sam_cigar, sam_read);
+		if (chr == -1) { line++; continue; }
+
+		if (sam_flag & 0x8) { // nema paired enda!
+			parse_read(sam_name, line, sam_pos, chr, sam_cigar, sam_read,
+								        -1,       0,   0, sam_cigar, sam_read);
+		}
+		else { // uh oh
+			read___ rx(sam_name, line, sam_pos, sam_flag, chr, sam_cigar, sam_read);
+			auto ix = short_index.find(key___(sam_name, sam_rnext, sam_pnext));
+			
+			if (ix != short_index.end()) {
+				read___ r1 = ix->second, r2 = rx;
+				if (r2.sam_flag & 0x40) swap(r1, r2);
+				parse_read(sam_name, r1.line, r1.sam_pos, r1.chr, r1.cigar.c_str(), r1.read.c_str(),
+											r2.line, r2.sam_pos, r2.chr, r2.cigar.c_str(), r2.read.c_str());
+				short_index.erase(ix);
+			}
+			else 
+				short_index[key___(sam_name, sam_rnext, sam_pnext)] = rx;
+		}
+
 		line++;
 	}
+
+	assert(short_index.size() == 0);
 
 	fclose(fi);
 }
@@ -276,7 +336,7 @@ void write_sam (const char *old_sam, const char *new_sam) {
 
 		sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
-		string name = fixname(sam_name, sam_read); //sam_flag);
+		string name = sam_name; //fixname(sam_name, sam_flag);
 
 		int chr = ga.get_chromosome(sam_rname);
 		if (chr == -1) { 
@@ -290,26 +350,27 @@ void write_sam (const char *old_sam, const char *new_sam) {
 		auto ri = reads.find(name);
 		if (ri != reads.end() 
 				&& ri->second.entries.size() == 1
-				&& ri->second.entries.begin()->first.line == line)
+				&& ((ri->second.entries.begin()->first.line == line) || 
+					(ri->second.entries.begin()->first.line2 == line)))
 		{
-			const read::read_entry &re = ri->second.entries.begin()->second;
+//			const read::read_entry &re = ri->second.entries.begin()->second;
 
-			assert(re.chromosome == chr);
-			assert(re.position == sam_pos);
+//			assert(re.chromosome == chr);
+//			assert(re.position == sam_pos);
 
-			fprintf(fl, "%40s %3d %16u %20s %10d %s\n",
+		/*	fprintf(fl, "%40s %3d %16u %20s %10d %s\n",
 					name.c_str(), 
 					re.chromosome, re.position,
 					re.partial->transcript->name.c_str(), 
 					re.partial_start,
-					re.partial->signature.c_str());
+					re.partial->signature.c_str());*/
 		
 			fputs(buffer, fo);
 			wr++;
 		}
 		else if (ri == reads.end() || ri->second.entries.size() == 0) {
-			fprintf(fl, "%40s discarded\n", name.c_str());
-			fputs(buffer, fo);
+	//		fprintf(fl, "%40s discarded\n", name.c_str());
+	//		fputs(buffer, fo);
 			ix++;
 		}
 		else 
@@ -326,17 +387,16 @@ void write_sam (const char *old_sam, const char *new_sam) {
 
 /*******************************************************************************/
 
-void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char *mode, int &read_length) {
+void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char *mode) {
 	int opt; 
 	struct option long_opt[] = {
 		{ "help",    0, NULL, 'h' },
 		{ "gtf",  	 1, NULL, 'g' },
 		{ "sam",		 1, NULL, 's' },
 		{ "mode",	 1, NULL, 'm' },
-		{ "readlen", 1, NULL, 'l' },
 		{ NULL,     0, NULL,  0  }
 	};
-	const char *short_opt = "hg:s:m:l:";
+	const char *short_opt = "hg:s:m:";
 	do {
 		opt = getopt_long (argc, argv, short_opt, long_opt, NULL);
 		switch (opt) {
@@ -350,9 +410,6 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 				break;
 			case 'm':
 				strncpy(mode, optarg, MAX_BUFFER);
-				break;
-			case 'l':
-				read_length = atoi(optarg);
 				break;
 			case -1:
 				break;
@@ -375,8 +432,7 @@ int main (int argc, char **argv) {
 		  new_sam[MAX_BUFFER],
 		  mode[MAX_BUFFER],
 		  buffer[MAX_BUFFER];
-	int read_length;
-	parse_opt(argc, argv, gtf, sam, new_sam, mode, read_length);
+	parse_opt(argc, argv, gtf, sam, new_sam, mode);
 
 	zaman_last();
 	

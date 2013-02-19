@@ -58,9 +58,10 @@ void initialize_structures (const set<partial_transcript> &partials, map<string,
 	//	E("%s -> ", ri->first.c_str());
 
 		// prepare and sort signature!
+		// SIG: <PT+PT1_loc>
 		map<const partial_transcript*, int> sig;
 		foreach (ei, r.entries) 
-			sig.insert(make_pair(ei->second.partial, ei->second.partial_start));
+			sig.insert(make_pair(ei->first.partial, ei->second.first.partial_start));
 		// form signature
 		string signature = "";
 		foreach (si, sig) {
@@ -148,7 +149,7 @@ int set_cover (int read_length) {
 
 		// calculate number of non-covered positions!
 		// and update the weight
-		double weight = clusters[i].partial->weight;
+		double weight = clusters[i].partial->weight();
 		//E("[%10.2lf %5d] ", weight, clusters[i].partial->length);
 		int notcovered = 0;
 		int prev = 0;
@@ -157,14 +158,14 @@ int set_cover (int read_length) {
 				notcovered += fr->first - prev;
 			prev = fr->first + read_length;
 		}
-		if (prev < clusters[i].partial->length)
-			notcovered += clusters[i].partial->length - prev;
+		if (prev < clusters[i].partial->length())
+			notcovered += clusters[i].partial->length() - prev;
 		if (notcovered > 1) {
 		//	LE("Set %s len %d notc %d\n", t->signature.c_str(), t->length, notcovered);
 		//	TODO talk with Phuong
 		//	E(" (%5d / %5d) ", notcovered, clusters[i].partial->length);
 			weight *= (1 + 
-					10.0 * double(notcovered) / clusters[i].partial->length);
+					10.0 * double(notcovered) / clusters[i].partial->length());
 		}
 	
 		// E("> %15s %10s %5d %.2lf\n", clusters[i].partial->transcript->name.c_str(), clusters[i].partial->signature.c_str(), covers, weight);
@@ -534,7 +535,7 @@ int smooth (const vector<int> &component) {
 			levels[*c].avg += s;
 		//	E("(%d -> %d) ", p->first, s);
 		}
-		levels[*c].avg /= clusters[*c].partial->length;
+		levels[*c].avg /= clusters[*c].partial->length();
 		sum += l;
 	}
 
@@ -581,14 +582,14 @@ int smooth (const vector<int> &component) {
 						//	update results, T part
 						fatreads[*fr].solution[T] += how_much;
 						levels[T].poscnt[t_pos] += how_much;
-						levels[T].avg += double(how_much) / clusters[T].partial->length;
+						levels[T].avg += double(how_much) / clusters[T].partial->length();
 						if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos]) // update max peak of T
 							levels[T].maxpos = c_pos;
 
 						//	update results, F part
 						fatreads[*fr].solution[F] -= how_much;
 						levels[F].poscnt[c_pos] -= how_much;
-						levels[F].avg -= double(how_much) / clusters[F].partial->length;
+						levels[F].avg -= double(how_much) / clusters[F].partial->length();
 
 						if (c_pos == levels[F].maxpos) { // should we update max level of F?
 							// ol is old maximum
@@ -690,15 +691,15 @@ void update_solution (map<string, struct read> &reads) {
 			// update reads
 			for (int c = 0; c < si->second; c++) {
 				struct read *r = fi->reads[i + c];
-				cluster &c = clusters[si->first];
+				cluster &cx = clusters[si->first];
 				int p_start = fi->clusters[si->first];
 
 				// find the read
 				// TODO what if multiple mappings on same pos?
 				read::read_key lhs;
-				read::read_entry rhs;
+				pair<read::read_entry, read::read_entry> rhs;
 				foreach (ei, r->entries)
-					if (ei->second.partial == c.partial && ei->second.partial_start == p_start) {
+					if (ei->first.partial == cx.partial && ei->second.first.partial_start == p_start) {
 						lhs = ei->first;
 						rhs = ei->second;
 						break;

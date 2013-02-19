@@ -26,7 +26,7 @@ void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
 	foreach (ri, reads) {
 		struct read &r = ri->second;
 		if (r.entries.size() == 1) {	 // single read
-			auto *t = r.entries.begin()->second.partial->transcript;
+			auto *t = r.entries.begin()->second.first.partial->transcript;
 			transcript_unique[t->id]++;
 		}
 	}
@@ -41,8 +41,8 @@ void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
 
 		double sum = 0;
 		foreach (ti, r.entries)
-			sum += transcript_unique[ti->second.partial->transcript->id] 
-						/ ti->second.partial->transcript->length();
+			sum += transcript_unique[ti->second.first.partial->transcript->id] 
+						/ ti->second.first.partial->transcript->length();
 		sum = ceil(sum);
 
 		auto it = r.entries.begin(); // result
@@ -50,8 +50,8 @@ void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
 			int ra = rand() % int(sum);
 			sum = 0;
 			foreach (ti, r.entries) {
-				sum += transcript_unique[ti->second.partial->transcript->id] 
-							/ ti->second.partial->transcript->length();
+				sum += transcript_unique[ti->second.first.partial->transcript->id] 
+							/ ti->second.first.partial->transcript->length();
 				if (ra < sum) {
 					it = ti;
 					break;
