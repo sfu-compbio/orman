@@ -8,10 +8,10 @@ CONCERTLIB=$(CPLEXDIR)/concert/lib/x86-64_sles10_4.1/static_pic
 CPLEXFLAGS=-DIL_STD -I $(CPLEXINC) -I $(CONCERTINC) -L $(CPLEXLIB) -L $(CONCERTLIB) -Wl,--start-group -lconcert -lilocplex -lcplex -lpthread -lm -DNDEBUG
 DATE=$(shell date)
 
-CF?=g++44
+CF?=g++
 DF?=-O3
 LF?=
-CFLAGS=-c $(DF) -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I boost150 -std=gnu++0x -DCOMPILE_TIME='"$(DATE)"'
+CFLAGS=-c $(DF) -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -I boost150 -std=gnu++0x -DCOMPILE_TIME='"$(DATE) with $(DF) $(LF)"'
 LDFLAGS= $(LF) -lm -lpthread 
 
 OBJECTS=$(SOURCES:.cc=.o)

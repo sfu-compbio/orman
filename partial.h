@@ -26,7 +26,7 @@ struct partial_transcript_single {
 	}
 };
 
-struct partial_transcript {
+/*struct partial_transcript {
 	const partial_transcript_single *p1, *p2;
 
 	partial_transcript(const partial_transcript_single *x1, const partial_transcript_single *x2) :
@@ -47,16 +47,17 @@ struct partial_transcript {
 		else 
 			return p1->weight + p2->weight + 100000;
 	}
-};
+};*/
 
+typedef pair<const partial_transcript_single*, const partial_transcript_single*> partial_transcript;  
 struct read {
 	struct read_entry {
-		const partial_transcript *partial;
+		partial_transcript partial;
 		pair<uint32_t, uint32_t> position, partial_start;
 		pair<int, int> line;
-
+		
 		read_entry (void) {}
-		read_entry (const partial_transcript *p, const pair<int, int> &l, const pair<uint32_t, uint32_t> &po, const pair<uint32_t, uint32_t> &s) : 
+		read_entry (const partial_transcript &p, const pair<int, int> &l, const pair<uint32_t, uint32_t> &po, const pair<uint32_t, uint32_t> &s) : 
 			partial(p), line(l), position(po), partial_start(s) {}
 	};
 	vector<read_entry> entries;

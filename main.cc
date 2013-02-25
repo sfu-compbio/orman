@@ -34,7 +34,6 @@ int read_length = 0;
 /*******************************************************************************/
 
 set<partial_transcript_single> partial_transcripts_single;
-set<partial_transcript> partial_transcripts;
 vector<struct read> reads;
 genome_annotation ga;
 
@@ -217,12 +216,13 @@ void parse_read (int name_id, int line1, uint32_t start_pos1, int chromosome1, c
 		if (pt1) { 		
 		//	if (reads[name].entries.find(line)!=reads[name].entries.end())
 		//		E("OOOOO! %s %d\n",name.c_str(), line);
-			auto pti = partial_transcripts.insert(partial_transcript(pt1, pt2));
-			const partial_transcript *pt = &(* pti.first);
+		//	auto pti = partial_transcripts.insert(partial_transcript(pt1, pt2));
+		//	const partial_transcript *pt = &(* pti.first);
 
 			if (reads.size() <= name_id)
 				reads.resize(name_id + 1000);
-			reads[name_id].entries.push_back(read::read_entry(pt, 
+			reads[name_id].entries.push_back(read::read_entry(
+				make_pair(pt1, pt2), 
 				make_pair(line1, line2),
 				make_pair(start_pos1, start_pos2),
 				make_pair(starting_position1, starting_position2)
@@ -275,7 +275,7 @@ void parse_sam (const char *sam_file) {
 	int line = 0;
 	int read_id = -1;
 	string prev_name = "";
-	E("\tSAM %%\t\tPartials\t\tReads\n");
+	E("\t%16s\t%16s\t%16s\t%16s\n", "", "Partial transcripts", "Reads", "SAM lines");
 	while (fgets(buffer, MAX_BUFFER, fi)) {
 		if (buffer[0] == '@') 
 			continue;
@@ -326,7 +326,7 @@ void parse_sam (const char *sam_file) {
 		line++;
 
 		if (line % 8092 == 0) 
-			E("\r\t%.2lf%%\t\t%'d\t\t%'d", 100.0 * double(ftell(fi)) / f_size, partial_transcripts_single.size(), reads.size());
+			E("\r\t%16.2lf%%\t%'16d\t%'16d\t%'16d", 100.0 * double(ftell(fi)) / f_size, partial_transcripts_single.size(), reads.size(), line);
 	}
 	assert(short_index.size() == 0);
 	E("\n");
@@ -498,7 +498,7 @@ int main (int argc, char **argv) {
 	else if (!strcmp(mode, "single"))
 		do_single(ga, reads);
 	else if (!strcmp(mode, "orman"))
-		do_orman(ga, partial_transcripts, reads, read_length);
+		do_orman(ga, reads, read_length);
 	else {
 		E("Unknown mode %s!\n");
 		exit(1);

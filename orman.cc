@@ -10,13 +10,13 @@ using namespace boost::heap;
 
 struct cluster {
 	int id;
-	const partial_transcript *partial;
+	partial_transcript partial;
 	// position -> [<fatreads ...>]
 	map<int, set<int> > fatreads;
 	bool covered;
 
 	cluster (void) {}
-	cluster (int i, const partial_transcript *p) :
+	cluster (int i, const partial_transcript &p) :
 		id(i), partial(p), covered(0) {}
 };
 vector<cluster> clusters;
@@ -33,19 +33,35 @@ vector<fatread> fatreads;
 
 /*****************************************************************************************/
 
-void initialize_structures (const set<partial_transcript> &partials, vector<struct read> &reads) {
-	// initialize our clusters
-	clusters.resize(partials.size());
+int partial_length (const partial_transcript &p)  {
+	return p.first->length;
+}
+int partial_weight (const partial_transcript &p) {
+	if (!p.second)
+		return 1000000 + p.first->weight;
+	else if (p.first->transcript == p.second->transcript)
+		return p.first->weight + p.second->weight;
+	else 
+		return p.first->weight + p.second->weight + 100000;
+}
 
+void initialize_structures (vector<struct read> &reads) {
 	// assign clusters to partials
+	set<partial_transcript> partials;
+	foreach (ri, reads)
+		foreach (re, ri->entries) 
+			partials.insert(re->partial);
+	
+	clusters.resize(partials.size());
 	int id = 0;
-	map<const partial_transcript*, int> cluster_index;
+	map<partial_transcript, int> cluster_index;
 	foreach (ci, partials) {
-		clusters[id] = cluster(id, &*ci);
-		cluster_index[&*ci] = id;
+		clusters[id] = cluster(id, *ci);
+		cluster_index[*ci] = id;
 	//	E("%s.%s %d\n", ci->transcript->name.c_str(), ci->signature.c_str(), id);
 		id++;
 	}
+	partials.clear();
 
 	// initialize fatreads
 	char buffer[MAX_BUFFER];
@@ -59,7 +75,7 @@ void initialize_structures (const set<partial_transcript> &partials, vector<stru
 
 		// prepare and sort signature!
 		// SIG: <PT+PT1_loc>
-		map<const partial_transcript*, int> sig;
+		map<partial_transcript, int> sig;
 		foreach (ei, r.entries) 
 			sig.insert(make_pair(ei->partial, ei->partial_start.first));
 		// form signature
@@ -149,7 +165,7 @@ int set_cover (int read_length) {
 
 		// calculate number of non-covered positions!
 		// and update the weight
-		double weight = clusters[i].partial->weight();
+		double weight = partial_weight(clusters[i].partial);
 		//E("[%10.2lf %5d] ", weight, clusters[i].partial->length);
 		int notcovered = 0;
 		int prev = 0;
@@ -158,14 +174,14 @@ int set_cover (int read_length) {
 				notcovered += fr->first - prev;
 			prev = fr->first + read_length;
 		}
-		if (prev < clusters[i].partial->length())
-			notcovered += clusters[i].partial->length() - prev;
+		if (prev < partial_length(clusters[i].partial))
+			notcovered += partial_length(clusters[i].partial) - prev;
 		if (notcovered > 1) {
 		//	LE("Set %s len %d notc %d\n", t->signature.c_str(), t->length, notcovered);
 		//	TODO talk with Phuong
 		//	E(" (%5d / %5d) ", notcovered, clusters[i].partial->length);
 			weight *= (1 + 
-					10.0 * double(notcovered) / clusters[i].partial->length());
+					10.0 * double(notcovered) / partial_length(clusters[i].partial));
 		}
 	
 		// E("> %15s %10s %5d %.2lf\n", clusters[i].partial->transcript->name.c_str(), clusters[i].partial->signature.c_str(), covers, weight);
@@ -535,7 +551,7 @@ int smooth (const vector<int> &component) {
 			levels[*c].avg += s;
 		//	E("(%d -> %d) ", p->first, s);
 		}
-		levels[*c].avg /= clusters[*c].partial->length();
+		levels[*c].avg /= partial_length(clusters[*c].partial);
 		sum += l;
 	}
 
@@ -582,14 +598,14 @@ int smooth (const vector<int> &component) {
 						//	update results, T part
 						fatreads[*fr].solution[T] += how_much;
 						levels[T].poscnt[t_pos] += how_much;
-						levels[T].avg += double(how_much) / clusters[T].partial->length();
+						levels[T].avg += double(how_much) / partial_length(clusters[T].partial);
 						if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos]) // update max peak of T
 							levels[T].maxpos = c_pos;
 
 						//	update results, F part
 						fatreads[*fr].solution[F] -= how_much;
 						levels[F].poscnt[c_pos] -= how_much;
-						levels[F].avg -= double(how_much) / clusters[F].partial->length();
+						levels[F].avg -= double(how_much) / partial_length(clusters[F].partial);
 
 						if (c_pos == levels[F].maxpos) { // should we update max level of F?
 							// ol is old maximum
@@ -717,9 +733,9 @@ void update_solution (vector<struct read> &reads) {
 //	fclose(fo);
 }
 
-void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, vector<struct read> &reads, int read_length) {
+void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read_length) {
 	E("Initializing ORMAN; read length is %d ...\n", read_length);
-	initialize_structures(partials, reads);
+	initialize_structures(reads);
 	E("done in %d seconds!\n", zaman_last());
 
 	E("Set cover ...\n");
