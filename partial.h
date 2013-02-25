@@ -63,14 +63,12 @@ struct read {
 		}
 	};
 	struct read_entry {
-		int chromosome;
 		uint32_t position;
-		const partial_transcript_single *partial;
-		int partial_start;
+		uint32_t partial_start;
 
 		read_entry (void) {}
-		read_entry (int c, uint32_t po, const partial_transcript_single *p, int s) : 
-			chromosome(c),	position(po), partial(p), partial_start(s) {}
+		read_entry (uint32_t po, uint32_t s) : 
+			position(po), partial_start(s) {}
 	};
 	map<read_key, pair<read_entry, read_entry> > entries; 
 };

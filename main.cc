@@ -12,6 +12,8 @@ using namespace std;
 const char *DEBUG_LOG_FILE = "orman.dbg";
 const char *LOG_FILE 		= "orman.log";
 
+bool retain_junk = false;
+
 typedef genome_annotation::transcript transcript;
 typedef genome_annotation::exon exon;
 
@@ -33,7 +35,7 @@ int read_length = 0;
 
 set<partial_transcript_single> partial_transcripts_single;
 set<partial_transcript> partial_transcripts;
-map<string, struct read> reads;
+vector<struct read> reads;
 genome_annotation ga;
 
 /*******************************************************************************/
@@ -188,8 +190,8 @@ void makecand (const vector<interval> &parts, int chromosome, map<transcript*, v
 	}
 }
 
-void parse_read (const string &name, int line1, uint32_t start_pos1, int chromosome1, const char *cigar1, const char *read1,
-					  							 int line2, uint32_t start_pos2, int chromosome2, const char *cigar2, const char *read2) {
+void parse_read (int name_id, int line1, uint32_t start_pos1, int chromosome1, const char *cigar1, const char *read1,
+					  					int line2, uint32_t start_pos2, int chromosome2, const char *cigar2, const char *read2) {
 	vector<interval> parts1,  parts2;
 	vector<indel>    indels1, indels2;
 	parse_cigar(start_pos1, cigar1, read1, parts1, indels1);
@@ -218,9 +220,11 @@ void parse_read (const string &name, int line1, uint32_t start_pos1, int chromos
 			auto pti = partial_transcripts.insert(partial_transcript(pt1, pt2));
 			const partial_transcript *pt = &(* pti.first);
 
-			reads[name].entries[read::read_key(line1, line2, pt)] = make_pair(
-				read::read_entry(chromosome1, start_pos1, pt1, starting_position1), 
-				read::read_entry(chromosome2, start_pos2, pt2, starting_position2)
+			if (reads.size() <= name_id)
+				reads.resize(name_id + 1000);
+			reads[name_id].entries[read::read_key(line1, line2, pt)] = make_pair(
+				read::read_entry(start_pos1, starting_position1), 
+				read::read_entry(start_pos2, starting_position2)
 			);
 		}
 	}
@@ -233,31 +237,29 @@ string fixname (const char *c, uint32_t sam_flag) {
 	return string(c) + "/" + string((sam_flag & 0x40) ? "1" : "2");
 }
 
-struct key___ {
-	string name, nextchr;
-	int nextchrpos;
-
-	key___(const string &n, const string &nc, int np) :
-		name(n), nextchr(nc), nextchrpos(np) {}
-	bool operator< (const key___& k) const {
-		return (name<k.name || (name==k.name && nextchr<k.nextchr));
-	}
-};
+#include <tuple>
+typedef pair<string, uint32_t> keyx___;
+typedef std::tuple<keyx___, keyx___, int32_t, bool> key___;
 struct read___ {
-	string name, cigar, read;
+	int id;
+	string cigar, read;
 	int chr, line;
 	uint32_t sam_pos, sam_flag;
 
 	read___ () {}
-	read___ (const string &n, int l, int sp, uint32_t sf, int c, const string &cc, const string &r) :
-		name(n), line(l), sam_pos(sp), sam_flag(sf), chr(c), cigar(cc), read(r) {}
+	read___ (int n, int l, int sp, uint32_t sf, int c, const string &cc, const string &r) :
+		id(n), line(l), sam_pos(sp), sam_flag(sf), chr(c), cigar(cc), read(r) {}
 };
 
 void parse_sam (const char *sam_file) {
 	FILE *fi = fopen(sam_file, "r");
 
+	fseek(fi, 0, SEEK_END);   // non-portable
+	int64_t f_size = ftell(fi);
+	fseek(fi, 0, SEEK_SET);
+
 	// what if sam file hates us?
-	map<key___, read___> short_index;
+	multimap<key___, read___> short_index;
 
 	char 		buffer[MAX_BUFFER];
 	char 		sam_name[MAX_BUFFER],
@@ -270,6 +272,9 @@ void parse_sam (const char *sam_file) {
 	uint8_t  sam_mapq;
 
 	int line = 0;
+	int read_id = -1;
+	string prev_name = "";
+	E("\tSAM %%\t\tPartials\t\tReads\n");
 	while (fgets(buffer, MAX_BUFFER, fi)) {
 		if (buffer[0] == '@') 
 			continue;
@@ -277,33 +282,53 @@ void parse_sam (const char *sam_file) {
 		sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
 
+		if (prev_name != string(sam_name)) {
+			if (short_index.size() != 0) {
+				E("File not SORTED! Line %d, read %d\n", line-1, prev_name.c_str());
+				abort();
+			}
+
+			prev_name = string(sam_name);
+			read_id++;
+		}
+
 		read_length = max(read_length, (int)strlen(sam_read));
 		int chr = ga.get_chromosome(sam_rname);
 		if (chr == -1) { line++; continue; }
+		bool secondary = sam_flag & 0x100;
 
 		if (sam_flag & 0x8) { // nema paired enda!
-			parse_read(sam_name, line, sam_pos, chr, sam_cigar, sam_read,
-								        -1,       0,   0, sam_cigar, sam_read);
+			parse_read(read_id, line, sam_pos, chr, sam_cigar, sam_read,
+								       -1,       0,   0, sam_cigar, sam_read);
 		}
 		else { // uh oh
-			read___ rx(sam_name, line, sam_pos, sam_flag, chr, sam_cigar, sam_read);
-			auto ix = short_index.find(key___(sam_name, sam_rnext, sam_pnext));
+			if (string(sam_rnext) == "=")
+				strcpy(sam_rnext, sam_rname);
+			read___ rx(read_id, line, sam_pos, sam_flag, chr, sam_cigar, sam_read);
+			auto ix = short_index.find(key___( 
+						keyx___(sam_rname, sam_pos), keyx___(sam_rnext, sam_pnext), 
+						abs(sam_tlen), secondary));
 			
 			if (ix != short_index.end()) {
 				read___ r1 = ix->second, r2 = rx;
 				if (r2.sam_flag & 0x40) swap(r1, r2);
-				parse_read(sam_name, r1.line, r1.sam_pos, r1.chr, r1.cigar.c_str(), r1.read.c_str(),
-											r2.line, r2.sam_pos, r2.chr, r2.cigar.c_str(), r2.read.c_str());
+				parse_read(read_id, r1.line, r1.sam_pos, r1.chr, r1.cigar.c_str(), r1.read.c_str(),
+										  r2.line, r2.sam_pos, r2.chr, r2.cigar.c_str(), r2.read.c_str());
 				short_index.erase(ix);
 			}
-			else 
-				short_index[key___(sam_name, sam_rnext, sam_pnext)] = rx;
+			else short_index.insert(make_pair(
+				key___(keyx___(sam_rnext, sam_pnext), 
+					keyx___(sam_rname, sam_pos), abs(sam_tlen), secondary),
+				rx));
 		}
 
 		line++;
-	}
 
+		if (line % 8092 == 0) 
+			E("\r\t%.2lf%%\t\t%'d\t\t%'d", 100.0 * double(ftell(fi)) / f_size, partial_transcripts_single.size(), reads.size());
+	}
 	assert(short_index.size() == 0);
+	E("\n");
 
 	fclose(fi);
 }
@@ -327,6 +352,10 @@ void write_sam (const char *old_sam, const char *new_sam) {
 		 di = 0,
 		 ix = 0;
 	int line = 0;
+
+	int read_id = -1;
+	string prev_name = "";
+
 	while (fgets(buffer, MAX_BUFFER, fi)) {
 		if (buffer[0] == '@') {	
 			fputs(buffer, fo);
@@ -338,6 +367,11 @@ void write_sam (const char *old_sam, const char *new_sam) {
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
 		string name = sam_name; //fixname(sam_name, sam_flag);
 
+		if (prev_name != string(sam_name)) {
+			prev_name = string(sam_name);
+			read_id++;
+		}
+
 		int chr = ga.get_chromosome(sam_rname);
 		if (chr == -1) { 
 			fprintf(fl, "%40s discarded\n", name.c_str());
@@ -347,11 +381,16 @@ void write_sam (const char *old_sam, const char *new_sam) {
 			continue; 
 		}
 
-		auto ri = reads.find(name);
-		if (ri != reads.end() 
-				&& ri->second.entries.size() == 1
-				&& ((ri->second.entries.begin()->first.line == line) || 
-					(ri->second.entries.begin()->first.line2 == line)))
+
+		if (read_id >= reads.size()) {
+			E("Error: r_id > reads!\n");
+			abort();
+		}
+
+		const auto &ri = reads[read_id];
+		if (ri.entries.size() == 1 &&
+			((ri.entries.begin()->first.line == line) || 
+			(ri.entries.begin()->first.line2 == line)))
 		{
 //			const read::read_entry &re = ri->second.entries.begin()->second;
 
@@ -368,9 +407,10 @@ void write_sam (const char *old_sam, const char *new_sam) {
 			fputs(buffer, fo);
 			wr++;
 		}
-		else if (ri == reads.end() || ri->second.entries.size() == 0) {
+		else if (/*ri == reads.end() ||*/ ri.entries.size() == 0) {
 	//		fprintf(fl, "%40s discarded\n", name.c_str());
-	//		fputs(buffer, fo);
+			if(retain_junk)
+				fputs(buffer, fo);
 			ix++;
 		}
 		else 
@@ -392,11 +432,12 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 	struct option long_opt[] = {
 		{ "help",    0, NULL, 'h' },
 		{ "gtf",  	 1, NULL, 'g' },
+		{ "junk",  	 1, NULL, 'j' },
 		{ "sam",		 1, NULL, 's' },
 		{ "mode",	 1, NULL, 'm' },
 		{ NULL,     0, NULL,  0  }
 	};
-	const char *short_opt = "hg:s:m:";
+	const char *short_opt = "hjg:s:m:";
 	do {
 		opt = getopt_long (argc, argv, short_opt, long_opt, NULL);
 		switch (opt) {
@@ -404,6 +445,9 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 				exit(0);
 			case 'g':
 				strncpy(gtf, optarg, MAX_BUFFER);
+				break;
+			case 'j':
+				retain_junk = true;
 				break;
 			case 's':
 				strncpy(sam, optarg, MAX_BUFFER);
@@ -423,6 +467,7 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 
 int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
+
 	E("Behold! Former Uniqorn Republic of Orman is starting!\n\tUsage: orman -g[gtf] -s[sam] -m[mode:(single|rescue|orman)] [new_sam]\n");
 	E("\tCompile time: %s\n", COMPILE_TIME);	
 	freopen(DEBUG_LOG_FILE, "w", stdout);
@@ -433,6 +478,9 @@ int main (int argc, char **argv) {
 		  mode[MAX_BUFFER],
 		  buffer[MAX_BUFFER];
 	parse_opt(argc, argv, gtf, sam, new_sam, mode);
+
+	if (retain_junk)
+		E("-j specified; SAM file will contain junk reads!\n");
 
 	zaman_last();
 	

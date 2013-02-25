@@ -7,7 +7,7 @@
 #include "partial.h"
 #include "annotation.h"
 
-void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, map<string, struct read> &reads, int read_length);
+void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, vector<struct read> &reads, int read_length);
 
 #endif // COMMON_H__
 

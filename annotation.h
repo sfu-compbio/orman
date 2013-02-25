@@ -34,6 +34,10 @@ public:
 		uint32_t length (void) const {
 			return exons[exons.size() - 1].end - exons[0].start + 1;
 		}
+
+		int chromosome (void) const {
+			return gene->chromosome;
+		}
 	};
 	struct gene {
 		int chromosome;

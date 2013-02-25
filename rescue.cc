@@ -7,7 +7,7 @@ using namespace std;
 
 /***********************************************************************/
 
-void do_single (const genome_annotation &ga, map<string, struct read> &reads) {
+void do_single (const genome_annotation &ga, vector<struct read> &reads) {
 	/*E("Discarding multi-reads ...\n");
 	foreach (ri, reads) {
 		struct read &r = ri->second;
@@ -19,14 +19,14 @@ void do_single (const genome_annotation &ga, map<string, struct read> &reads) {
 
 /***********************************************************************/
 
-void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
+void do_rescue (const genome_annotation &ga, vector<struct read> &reads) {
 	E("Initializing RESCUE ...\n");
 	vector<int> transcript_unique(ga.get_transcript_count(), 0);
 	// find uniqs
 	foreach (ri, reads) {
-		struct read &r = ri->second;
+		struct read &r = *ri;
 		if (r.entries.size() == 1) {	 // single read
-			auto *t = r.entries.begin()->second.first.partial->transcript;
+			auto *t = r.entries.begin()->first.partial->p1->transcript;
 			transcript_unique[t->id]++;
 		}
 	}
@@ -35,14 +35,14 @@ void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
 	// do rescue
 	E("Applying RESCUE strategy ...\n");
 	foreach (ri, reads) {
-		struct read &r = ri->second;
+		struct read &r = *ri;
 		if (r.entries.size() < 2)  
 			continue;
 
 		double sum = 0;
 		foreach (ti, r.entries)
-			sum += transcript_unique[ti->second.first.partial->transcript->id] 
-						/ ti->second.first.partial->transcript->length();
+			sum += transcript_unique[ti->first.partial->p1->transcript->id] 
+						/ ti->first.partial->p1->transcript->length();
 		sum = ceil(sum);
 
 		auto it = r.entries.begin(); // result
@@ -50,8 +50,8 @@ void do_rescue (const genome_annotation &ga, map<string, struct read> &reads) {
 			int ra = rand() % int(sum);
 			sum = 0;
 			foreach (ti, r.entries) {
-				sum += transcript_unique[ti->second.first.partial->transcript->id] 
-							/ ti->second.first.partial->transcript->length();
+				sum += transcript_unique[ti->first.partial->p1->transcript->id] 
+							/ ti->first.partial->p1->transcript->length();
 				if (ra < sum) {
 					it = ti;
 					break;

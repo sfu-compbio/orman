@@ -33,7 +33,7 @@ vector<fatread> fatreads;
 
 /*****************************************************************************************/
 
-void initialize_structures (const set<partial_transcript> &partials, map<string, struct read> &reads) {
+void initialize_structures (const set<partial_transcript> &partials, vector<struct read> &reads) {
 	// initialize our clusters
 	clusters.resize(partials.size());
 
@@ -51,7 +51,7 @@ void initialize_structures (const set<partial_transcript> &partials, map<string,
 	char buffer[MAX_BUFFER];
 	map<string, int> fatread_index;
 	foreach (ri, reads) {
-		struct read &r = ri->second;
+		struct read &r = *ri;
 		if (r.entries.size() < 1)
 			continue;
 
@@ -680,7 +680,7 @@ void connected_components (void) {
 //	env.end();
 }
 
-void update_solution (map<string, struct read> &reads) {
+void update_solution (vector<struct read> &reads) {
 	int discarded = 0;
 	foreach (fi, fatreads) {
 		int i = 0;
@@ -719,7 +719,7 @@ void update_solution (map<string, struct read> &reads) {
 //	fclose(fo);
 }
 
-void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, map<string, struct read> &reads, int read_length) {
+void do_orman (const genome_annotation &ga, const set<partial_transcript> &partials, vector<struct read> &reads, int read_length) {
 	E("Initializing ORMAN; read length is %d ...\n", read_length);
 	initialize_structures(partials, reads);
 	E("done in %d seconds!\n", zaman_last());
