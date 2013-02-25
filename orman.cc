@@ -61,7 +61,7 @@ void initialize_structures (const set<partial_transcript> &partials, vector<stru
 		// SIG: <PT+PT1_loc>
 		map<const partial_transcript*, int> sig;
 		foreach (ei, r.entries) 
-			sig.insert(make_pair(ei->first.partial, ei->second.first.partial_start));
+			sig.insert(make_pair(ei->partial, ei->partial_start.first));
 		// form signature
 		string signature = "";
 		foreach (si, sig) {
@@ -696,16 +696,14 @@ void update_solution (vector<struct read> &reads) {
 
 				// find the read
 				// TODO what if multiple mappings on same pos?
-				read::read_key lhs;
-				pair<read::read_entry, read::read_entry> rhs;
+				read::read_entry rhs;
 				foreach (ei, r->entries)
-					if (ei->first.partial == cx.partial && ei->second.first.partial_start == p_start) {
-						lhs = ei->first;
-						rhs = ei->second;
+					if (ei->partial == cx.partial && ei->partial_start.first == p_start) {
+						rhs = *ei;
 						break;
 					}
 				r->entries.clear();
-				r->entries[lhs] = rhs;
+				r->entries.push_back(rhs);
 			}
 			i += si->second;
 		}

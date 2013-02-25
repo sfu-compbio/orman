@@ -222,10 +222,11 @@ void parse_read (int name_id, int line1, uint32_t start_pos1, int chromosome1, c
 
 			if (reads.size() <= name_id)
 				reads.resize(name_id + 1000);
-			reads[name_id].entries[read::read_key(line1, line2, pt)] = make_pair(
-				read::read_entry(start_pos1, starting_position1), 
-				read::read_entry(start_pos2, starting_position2)
-			);
+			reads[name_id].entries.push_back(read::read_entry(pt, 
+				make_pair(line1, line2),
+				make_pair(start_pos1, start_pos2),
+				make_pair(starting_position1, starting_position2)
+			));
 		}
 	}
 }
@@ -389,8 +390,8 @@ void write_sam (const char *old_sam, const char *new_sam) {
 
 		const auto &ri = reads[read_id];
 		if (ri.entries.size() == 1 &&
-			((ri.entries.begin()->first.line == line) || 
-			(ri.entries.begin()->first.line2 == line)))
+			((ri.entries.begin()->line.first == line) || 
+			(ri.entries.begin()->line.second == line)))
 		{
 //			const read::read_entry &re = ri->second.entries.begin()->second;
 

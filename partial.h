@@ -50,27 +50,16 @@ struct partial_transcript {
 };
 
 struct read {
-	struct read_key { // same line, it can map to multiple partial transcripts!
-		const partial_transcript *partial;
-		int line, line2;
-
-		read_key (void) {}
-		read_key (int l, int l2, const partial_transcript *p) :
-			partial(p), line(l), line2(l2) {}
-
-		bool operator< (const read_key &r) const {
-			return line < r.line || (line == r.line && partial < r.partial);
-		}
-	};
 	struct read_entry {
-		uint32_t position;
-		uint32_t partial_start;
+		const partial_transcript *partial;
+		pair<uint32_t, uint32_t> position, partial_start;
+		pair<int, int> line;
 
 		read_entry (void) {}
-		read_entry (uint32_t po, uint32_t s) : 
-			position(po), partial_start(s) {}
+		read_entry (const partial_transcript *p, const pair<int, int> &l, const pair<uint32_t, uint32_t> &po, const pair<uint32_t, uint32_t> &s) : 
+			partial(p), line(l), position(po), partial_start(s) {}
 	};
-	map<read_key, pair<read_entry, read_entry> > entries; 
+	vector<read_entry> entries;
 };
 
 #endif // COMMON_H__
