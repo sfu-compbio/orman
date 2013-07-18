@@ -18,7 +18,7 @@ struct cluster {
 
 	cluster (void) {}
 	cluster (int i, const PT &p) :
-		id(i), partial(p), covered(0), coverage(0) {}
+		id(i), partial(p), covered(1), coverage(0) {}
 };
 vector<cluster> clusters;
 
@@ -151,7 +151,7 @@ public:
 };
 
 int set_cover (int read_length) {
-	fibonacci_heap<heap_t> heap;
+	/*fibonacci_heap<heap_t> heap;
 	vector<fibonacci_heap<heap_t>::handle_type> heap_handles(clusters.size());
 	for (int i = 0; i < clusters.size(); i++) {
 		int covers = 0;
@@ -198,7 +198,8 @@ int set_cover (int read_length) {
 		mincover++;
 
 		foreach (pos, h.t->fatreads) 
-			foreach (r, pos->second) /* in fatreads */ if (!read_visited[*r]) {
+			foreach (r, pos->second) // in fatreads 
+			if (!read_visited[*r]) {
 			//	fatreads[*r].solution[ h.t->id ] += fatreads[*r].reads.size(); // assign ALL to this set
 
 				foreach (s, fatreads[*r].clusters) if (s->first != h.t->id) {
@@ -209,8 +210,16 @@ int set_cover (int read_length) {
 				read_visited[*r] = 1;
 			}
 		h.t->covered = true;
-	}
-
+	}*/
+/*
+	foreach (c, clusters)
+		if (c->covered) {
+			PTsp pt1 = c->partial.first;
+			L("%s + ", string(pt1->transcript->gene->name + "." + pt1->transcript->name + ":" + pt1->signature).c_str());
+			PTsp pt2 = c->partial.second;
+			L("%s\n", string(pt1->transcript->gene->name + "." + pt1->transcript->name + ":" + pt1->signature).c_str());
+		}
+*/
 	//int not_covered = 0, ncr = 0;
 
 /*	foreach (c, clusters)
@@ -225,7 +234,7 @@ int set_cover (int read_length) {
 			cv |= clusters[t->first].covered;
 		if (!cv) {
 			not_covered++;
-			ncr += fr->reads.size();
+			ncr += fr->reads.s();
 			//E("<<%d:\n",fr->clusters.size());
 			//foreach(cx, fr->clusters)
 			//	E("\t%d %d %.2lf\n", clusters[cx->first].covered, (*heap_handles[cx->first]).cardinality, (*heap_handles[cx->first]).weight);
@@ -233,7 +242,7 @@ int set_cover (int read_length) {
 	}*/
 	//E("\t%'d non-covered fatreads (%'d reads)\n", not_covered, ncr);
 
-	return mincover;
+	return clusters.size();
 }
 
 void probabilistic_assign (void) {

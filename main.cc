@@ -119,15 +119,21 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 
 	if (exons.size() == 0 || parts.size() == 0) {
 #ifdef LOGIFY
-		get_partial_transcript_error += S("exon_span=%d; cigar_parts=%d; ", exons.size(), parts.size());
+//		get_partial_transcript_error += S("exon_span=%d;cigar_parts=%d;", exons.size(), parts.size());
 #endif
 		return 0;
 	}
+
+#ifdef LOGIFY
+	exon *pt1 = exons[0];
+	get_partial_transcript_error += S("%s:ERR=", string(pt1->transcript->gene->name + "." + pt1->transcript->name).c_str());
+#endif
+
 	// disregard reads with mapping chunk <4
 	foreach (pi, parts)
 		if (pi->second - pi->first + 1 < 4) {
 #ifdef LOGIFY
-			get_partial_transcript_error += S("part_sz<4; ");
+			get_partial_transcript_error += S("part_sz<4;");
 #endif
 			return 0;
 		}
@@ -139,7 +145,7 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 		// only allow +- 4 introns at the beginning
 		if (parts[pi].first < e->start && !(e->start - parts[pi].first < 4)) { 
 #ifdef LOGIFY
-			get_partial_transcript_error += S("intron_beginning_exon_%d; ", e->id);
+			get_partial_transcript_error += S("intronS_exon_%d;", e->id);
 #endif
 			return 0; 
 		}
@@ -149,7 +155,7 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 			// internal exon skip
 			if (prev < parts[pi].first) {
 #ifdef LOGIFY
-			get_partial_transcript_error += S("inexon_skip_%d; ", e->id);
+			get_partial_transcript_error += S("inexon_skip_%d;", e->id);
 #endif
 				return 0;
 			}
@@ -160,7 +166,7 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 		// allow +-4 at the end as well
 		if (pi < parts.size () && parts[pi].first <= e->end && !(parts[pi].second - e->end < 4)) {
 #ifdef LOGIFY
-			get_partial_transcript_error += S("intron_ending_exon_%d; ", e->id);
+			get_partial_transcript_error += S("intronE_exon_%d;", e->id);
 #endif
 			return 0;
 		}
@@ -236,6 +242,8 @@ void makecand (const vector<interval> &parts, int chromosome, map<transcript*, v
 	}
 }
 
+string _sline2, _sline1;
+
 /*
  * get all pairs of partial transcripts for each paired read
  */
@@ -253,36 +261,30 @@ void parse_read (int64_t line1, uint32_t start_pos1, int chromosome1, const char
 	trimx(parts2); makecand(parts2, chromosome2, candidates2);
 
 #ifdef LOGIFY
-	LOG("%d & %d\n", line1, line2);
-	if (candidates1.size() == 0) 
-		LOG("\t/1.%09d %s no_valid_candidiates;\n", line1, cigar1);
-	if (line2 != 0 && candidates2.size() == 0) 
-		LOG("\t/2.%09d %s no_valid_candidiates;\n", line2, cigar2);
-#endif
-
-#ifdef LOGIFY_ONLY
+	LOG("%s ", _sline1.c_str());
 	foreach (ci1, candidates1) {
 		int starting_position1 = 0; 
 		PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
-		LOG("\t/1.%09d %s %s\n", line1, cigar1, pt1 
-				? string(pt1->transcript->gene->name + "_" +pt1->transcript->name + "_" + pt1->signature).c_str()
-				: get_partial_transcript_error.c_str());
+		if (pt1) LOG("%s ", string(pt1->transcript->gene->name + "." + pt1->transcript->name + ":" + pt1->signature).c_str());
+		else LOG("%s ", get_partial_transcript_error.c_str());
 	}
+	LOG("\n");
+	LOG("%s ", _sline2.c_str());
 	foreach (ci2, candidates2) {
 		int starting_position2 = 0; 
 		PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2);
-		LOG("\t/2.%09d %s %s\n", line2, cigar2, pt2 
-				? string(pt2->transcript->gene->name + "_" +pt2->transcript->name + "_" + pt2->signature).c_str()
-				: get_partial_transcript_error.c_str());
+		if (pt2) LOG("%s ", string(pt2->transcript->gene->name + "." + pt2->transcript->name + ":" + pt2->signature).c_str());
+		else LOG("%s ", get_partial_transcript_error.c_str());
 	}
+	LOG("\n");
 #else
 	foreach (ci1, candidates1) {
 		int starting_position1 = 0; 
 		PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
 #ifdef LOGIFY
-		LOG("\t/1.%09d %s %s\n", line1, cigar1, pt1 
-				? string(pt1->transcript->gene->name + "_" +pt1->transcript->name + "_" + pt1->signature).c_str()
-				: get_partial_transcript_error.c_str());
+//		LOG("\t/1.%09d %s %s\n", line1, cigar1, pt1 
+//				? string(pt1->transcript->gene->name + "_" +pt1->transcript->name + "_" + pt1->signature).c_str()
+//				: get_partial_transcript_error.c_str());
 #endif
 
 		// first mate HAS TO BE VALID!
@@ -295,9 +297,9 @@ void parse_read (int64_t line1, uint32_t start_pos1, int chromosome1, const char
 				if (pt2) 
 					result.insert(make_pair(make_tuple(pt1, starting_position1, line1), make_tuple(pt2, starting_position2, line2)));
 #ifdef LOGIFY
-				LOG("\t/2.%09d %s %s\n", line2, cigar2, pt2 
-						? string(pt2->transcript->gene->name + "_" +pt2->transcript->name + "_" + pt2->signature).c_str()
-						: get_partial_transcript_error.c_str());
+//				LOG("\t/2.%09d %s %s\n", line2, cigar2, pt2 
+//						? string(pt2->transcript->gene->name + "_" +pt2->transcript->name + "_" + pt2->signature).c_str()
+//						: get_partial_transcript_error.c_str());
 #endif
 
 				with_null |= (pt2 != 0);
@@ -361,8 +363,10 @@ void parse_sam (const char *sam_file) {
 			// iterate through all reads and obtain all pairs of partial transcripts
 			set<pair<tuple<PTsp, int, int64_t>, tuple<PTsp, int, int64_t>>> result, tmp;
 #ifdef LOGIFY
-			LOG("%s =%d\n", prev_name.c_str(), idx.size());
+//			LOG("%s =%d\n", prev_name.c_str(), idx.size());
 #endif
+			_sline1 = prev_name;
+			_sline2 = prev_name + "/REV";
 			foreach (i, idx) {
 				auto &r1 = i->second.first,
 					  &r2 = i->second.second;
