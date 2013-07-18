@@ -6,13 +6,30 @@
 #include "rescue.h"
 #include "partial.h"
 #include "orman.h"
-
+#include <tuple>
+#include <cstdarg>
 using namespace std;
+
+#ifdef LOGIFY_ONLY
+#define LOGIFY
+#endif
 
 const char *DEBUG_LOG_FILE = "orman.dbg";
 const char *LOG_FILE 		= "orman.log";
 
-bool retain_junk = false;
+char junk_file_path[MAX_BUFFER];
+
+FILE *flog;
+#define LOG(c,...) fprintf(flog,c,##__VA_ARGS__)
+
+const char *S (const char* f, ...) {
+	static char bf[MAX_BUFFER];
+	va_list args;
+	va_start(args, f);
+	vsprintf(bf, f, args);
+	va_end(args);
+	return (bf);
+}
 
 typedef genome_annotation::transcript transcript;
 typedef genome_annotation::exon exon;
@@ -29,18 +46,30 @@ struct indel {
 		first(f), second(s), type(t) {}
 };
 
-int read_length = 0;
+bool 		retain_junk 	= false;
+int 		read_length 	= 0;
+const char*		gene_sam_flag 	= "YG";
 
 /*******************************************************************************/
 
-set<partial_transcript_single> partial_transcripts_single;
-vector<struct read> reads;
-genome_annotation ga;
+set<PTs> 							PTs_set;
+map<pair<PTsp, PTsp>, int> 	PT_single_count;
+vector<struct read> 				reads;
+genome_annotation 				ga;
+
+int get_single_coverage(const PT &p) {
+	auto i = PT_single_count.find(p);
+	if (i == PT_single_count.end())
+		return 0;
+	else 
+		return i->second;
+}
 
 /*******************************************************************************/
 
 bool parse_cigar (uint32_t start_pos, const char *cigar, const char *read, vector<interval> &result, vector<indel> &indels) {
 	int num = 0;
+	
 	while (*cigar) {
 		if (isdigit(*cigar))
 			num = 10 * num + (*cigar - '0');
@@ -78,16 +107,28 @@ bool parse_cigar (uint32_t start_pos, const char *cigar, const char *read, vecto
 
 /*******************************************************************************/
 
-const partial_transcript_single *get_partial_transcript (transcript *t, const vector<exon*> &exons, const vector<interval> &parts, const vector<indel> &indels, int &starting_position) {
+#ifdef LOGIFY
+static string get_partial_transcript_error;
+#endif
+
+PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const vector<interval> &parts, const vector<indel> &indels, int &starting_position) {
 	// disregard junk
+#ifdef LOGIFY
+	get_partial_transcript_error = "";
+#endif
+
 	if (exons.size() == 0 || parts.size() == 0) {
-		L("exsz %d pasz %d", exons.size(), parts.size());
+#ifdef LOGIFY
+		get_partial_transcript_error += S("exon_span=%d; cigar_parts=%d; ", exons.size(), parts.size());
+#endif
 		return 0;
 	}
 	// disregard reads with mapping chunk <4
 	foreach (pi, parts)
 		if (pi->second - pi->first + 1 < 4) {
-			L("map chunk <4");
+#ifdef LOGIFY
+			get_partial_transcript_error += S("part_sz<4; ");
+#endif
 			return 0;
 		}
 	// disregard reads with introns and internal exon skips
@@ -97,7 +138,9 @@ const partial_transcript_single *get_partial_transcript (transcript *t, const ve
 		// disregard introns
 		// only allow +- 4 introns at the beginning
 		if (parts[pi].first < e->start && !(e->start - parts[pi].first < 4)) { 
-			L("intron1");
+#ifdef LOGIFY
+			get_partial_transcript_error += S("intron_beginning_exon_%d; ", e->id);
+#endif
 			return 0; 
 		}
 		// find internal skips
@@ -105,7 +148,9 @@ const partial_transcript_single *get_partial_transcript (transcript *t, const ve
 		while (pi < parts.size() && ((parts[pi].second <= e->end) || (parts[pi].second - e->end < 4))) {
 			// internal exon skip
 			if (prev < parts[pi].first) {
-				L("skip");
+#ifdef LOGIFY
+			get_partial_transcript_error += S("inexon_skip_%d; ", e->id);
+#endif
 				return 0;
 			}
 			prev = parts[pi].second;
@@ -114,7 +159,9 @@ const partial_transcript_single *get_partial_transcript (transcript *t, const ve
 		// again, no introns
 		// allow +-4 at the end as well
 		if (pi < parts.size () && parts[pi].first <= e->end && !(parts[pi].second - e->end < 4)) {
-			L("intron2");
+#ifdef LOGIFY
+			get_partial_transcript_error += S("intron_ending_exon_%d; ", e->id);
+#endif
 			return 0;
 		}
 	}
@@ -135,7 +182,7 @@ const partial_transcript_single *get_partial_transcript (transcript *t, const ve
 			weight += 100 * (t->exons[j].end - t->exons[j].start + 1);
 		length += e->end - e->start + 1;
 		// add exons
-		signature += "e" + numtostr(e->id);
+		signature += "e" + e->sid; //numtostr(e->id);
 		// indels have to be in exons; otherwise we don't care
 		// also they have to be +- 6 from sides
 		while (indel_idx < indels.size() && indels[indel_idx].first < e->start + 6)
@@ -160,8 +207,8 @@ const partial_transcript_single *get_partial_transcript (transcript *t, const ve
 		}
 	}
 
-	partial_transcript_single pt(t, signature, length, weight);
-	auto pti = partial_transcripts_single.insert(pt);
+	PTs pt(t, signature, length, weight);
+	auto pti = PTs_set.insert(pt);
 	return &(* pti.first);
 }
 
@@ -189,78 +236,103 @@ void makecand (const vector<interval> &parts, int chromosome, map<transcript*, v
 	}
 }
 
-void parse_read (int name_id, int line1, uint32_t start_pos1, int chromosome1, const char *cigar1, const char *read1,
-					  					int line2, uint32_t start_pos2, int chromosome2, const char *cigar2, const char *read2) {
+/*
+ * get all pairs of partial transcripts for each paired read
+ */
+void parse_read (int64_t line1, uint32_t start_pos1, int chromosome1, const char *cigar1, const char *read1,
+					  int64_t line2, uint32_t start_pos2, int chromosome2, const char *cigar2, const char *read2,
+					  set<pair<tuple<PTsp, int, int64_t>, tuple<PTsp, int, int64_t>>> &result) {
 	vector<interval> parts1,  parts2;
 	vector<indel>    indels1, indels2;
-	parse_cigar(start_pos1, cigar1, read1, parts1, indels1);
+
+	if (line1 >= 0) parse_cigar(start_pos1, cigar1, read1, parts1, indels1);
 	if (line2 >= 0) parse_cigar(start_pos2, cigar2, read2, parts2, indels2);
 
 	map<transcript*, vector<exon*> > candidates1, candidates2;
 	trimx(parts1); makecand(parts1, chromosome1, candidates1);
 	trimx(parts2); makecand(parts2, chromosome2, candidates2);
-	
-	foreach (ci1, candidates1) foreach (ci2, candidates2) {
-		int starting_position1 = 0, 
-			 starting_position2 = 0;
 
-	//	L("%40s ", name.c_str());
-		const partial_transcript_single *pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
-		const partial_transcript_single *pt2 = line2 >= 0 ? get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2) : 0;
-		
-/*		if (pt) L(" %20s %20s %10d ", pt->transcript->name.c_str(), pt->signature.c_str(), starting_position); 
-		L(" cigar %s tr %s ex ", cigar, ci->first->name.c_str()); foreach(e, ci->second) L("(%d,%d) ",(*e)->start, (*e)->end); L("parts "); foreach(p,parts)L("(%d %d) ", p->first, p->second); 
-		L("\n");*/
+#ifdef LOGIFY
+	LOG("%d & %d\n", line1, line2);
+	if (candidates1.size() == 0) 
+		LOG("\t/1.%09d %s no_valid_candidiates;\n", line1, cigar1);
+	if (line2 != 0 && candidates2.size() == 0) 
+		LOG("\t/2.%09d %s no_valid_candidiates;\n", line2, cigar2);
+#endif
 
-	// right now strand/1 HAS TO BE VALID!
-		if (pt1) { 		
-		//	if (reads[name].entries.find(line)!=reads[name].entries.end())
-		//		E("OOOOO! %s %d\n",name.c_str(), line);
-		//	auto pti = partial_transcripts.insert(partial_transcript(pt1, pt2));
-		//	const partial_transcript *pt = &(* pti.first);
+#ifdef LOGIFY_ONLY
+	foreach (ci1, candidates1) {
+		int starting_position1 = 0; 
+		PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
+		LOG("\t/1.%09d %s %s\n", line1, cigar1, pt1 
+				? string(pt1->transcript->gene->name + "_" +pt1->transcript->name + "_" + pt1->signature).c_str()
+				: get_partial_transcript_error.c_str());
+	}
+	foreach (ci2, candidates2) {
+		int starting_position2 = 0; 
+		PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2);
+		LOG("\t/2.%09d %s %s\n", line2, cigar2, pt2 
+				? string(pt2->transcript->gene->name + "_" +pt2->transcript->name + "_" + pt2->signature).c_str()
+				: get_partial_transcript_error.c_str());
+	}
+#else
+	foreach (ci1, candidates1) {
+		int starting_position1 = 0; 
+		PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
+#ifdef LOGIFY
+		LOG("\t/1.%09d %s %s\n", line1, cigar1, pt1 
+				? string(pt1->transcript->gene->name + "_" +pt1->transcript->name + "_" + pt1->signature).c_str()
+				: get_partial_transcript_error.c_str());
+#endif
 
-			if (reads.size() <= name_id)
-				reads.resize(name_id + 1000);
-			reads[name_id].entries.push_back(read::read_entry(
-				make_pair(pt1, pt2), 
-				make_pair(line1, line2),
-				make_pair(start_pos1, start_pos2),
-				make_pair(starting_position1, starting_position2)
-			));
+		// first mate HAS TO BE VALID!
+		if (pt1) {
+			// special case if there is no valid pair
+			bool with_null = false;
+			if (candidates2.size()) foreach (ci2, candidates2) {
+				int starting_position2 = 0;
+				PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2);
+				if (pt2) 
+					result.insert(make_pair(make_tuple(pt1, starting_position1, line1), make_tuple(pt2, starting_position2, line2)));
+#ifdef LOGIFY
+				LOG("\t/2.%09d %s %s\n", line2, cigar2, pt2 
+						? string(pt2->transcript->gene->name + "_" +pt2->transcript->name + "_" + pt2->signature).c_str()
+						: get_partial_transcript_error.c_str());
+#endif
+
+				with_null |= (pt2 != 0);
+			}
+			if (with_null)
+				result.insert(make_pair(make_tuple(pt1, starting_position1, line1), make_tuple((PTsp)0, 0, line2)));
 		}
 	}
+#endif
 }
 
 
 /*******************************************************************************/
 
-string fixname (const char *c, uint32_t sam_flag) {
-	return string(c) + "/" + string((sam_flag & 0x40) ? "1" : "2");
-}
-
-#include <tuple>
-typedef pair<string, uint32_t> keyx___;
-typedef std::tuple<keyx___, keyx___, int32_t, bool> key___;
-struct read___ {
-	int id;
-	string cigar, read;
-	int chr, line;
-	uint32_t sam_pos, sam_flag;
-
-	read___ () {}
-	read___ (int n, int l, int sp, uint32_t sf, int c, const string &cc, const string &r) :
-		id(n), line(l), sam_pos(sp), sam_flag(sf), chr(c), cigar(cc), read(r) {}
-};
+vector<pair<int64_t, genome_annotation::gene*>> single_maps;
+vector<int64_t> crappy_reads;
 
 void parse_sam (const char *sam_file) {
 	FILE *fi = fopen(sam_file, "r");
 
-	fseek(fi, 0, SEEK_END);   // non-portable
+	// obtain the file size
+	fseek(fi, 0, SEEK_END);
 	int64_t f_size = ftell(fi);
 	fseek(fi, 0, SEEK_SET);
 
-	// what if sam file hates us?
-	multimap<key___, read___> short_index;
+	// define storage for the same reads
+	// key:   <<chr, pos>, <nextchr, nextpos>, frag_len, is_secondary_mapping>
+	typedef tuple<	pair<int, uint32_t>,
+			  			pair<int, uint32_t>,
+						int, bool > idx_key;
+	// value: <<line1, read1, cigar1>, <line2, read2 cigar2>
+	typedef pair< tuple<int64_t, string, string>, 
+			  		  tuple<int64_t, string, string> > idx_val;
+	// UGLY! but works for now ...
+	multimap<idx_key, idx_val> idx;
 
 	char 		buffer[MAX_BUFFER];
 	char 		sam_name[MAX_BUFFER],
@@ -272,10 +344,11 @@ void parse_sam (const char *sam_file) {
 	int32_t  sam_pnext, sam_tlen;
 	uint8_t  sam_mapq;
 
-	int line = 0;
-	int read_id = -1;
+	int64_t line = 0;
+	int read_id = 0;
 	string prev_name = "";
-	E("\t%16s\t%16s\t%16s\t%16s\n", "", "Partial transcripts", "Reads", "SAM lines");
+
+	E("\t%5s %15s %15s %15s\n", "%%", "Partials", "Reads", "SAM lines");
 	while (fgets(buffer, MAX_BUFFER, fi)) {
 		if (buffer[0] == '@') 
 			continue;
@@ -283,147 +356,201 @@ void parse_sam (const char *sam_file) {
 		sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
 
-		if (prev_name != string(sam_name)) {
-			if (short_index.size() != 0) {
-				E("File not SORTED! Line %d, read %d\n", line-1, prev_name.c_str());
-				abort();
+		if (prev_name != string(sam_name) || feof(fi))
+		{
+			// iterate through all reads and obtain all pairs of partial transcripts
+			set<pair<tuple<PTsp, int, int64_t>, tuple<PTsp, int, int64_t>>> result, tmp;
+#ifdef LOGIFY
+			LOG("%s =%d\n", prev_name.c_str(), idx.size());
+#endif
+			foreach (i, idx) {
+				auto &r1 = i->second.first,
+					  &r2 = i->second.second;
+				parse_read(
+					get<0>(r1), get<0>(i->first).second, get<0>(i->first).first, get<2>(r1).c_str(), get<1>(r1).c_str(),
+					get<0>(r2), get<1>(i->first).second, get<1>(i->first).first, get<2>(r2).c_str(), get<1>(r2).c_str(),
+					tmp
+				);
+				if (retain_junk && tmp.size() == 0) { // crappy?!
+					if (get<0>(r1) >= 0) crappy_reads.push_back(get<0>(r1));
+					if (get<0>(r2) >= 0) crappy_reads.push_back(get<0>(r2));
+				}
+				result.insert(tmp.begin(), tmp.end());
 			}
 
+#ifndef LOGIFY_ONLY
+			// process ONLY if we have multi-mappings!
+			if (result.size() > 1) { 
+				if (read_id >= reads.size())
+					reads.resize(read_id + 10000);
+				foreach (i, result) {
+					reads[read_id].entries.push_back(read::read_entry(
+						make_pair(get<0>(i->first), get<0>(i->second)), // PT 
+						make_pair(get<2>(i->first), get<2>(i->second)), // line 
+						make_pair(get<1>(i->first), get<1>(i->second))  // PT start pos
+					));
+				}
+				read_id++;
+			}
+			// otherwise, just update the single-mapping partial counter
+			else if (result.size() == 1) {
+				auto k = make_pair(get<0>(result.begin()->first), get<0>(result.begin()->second));
+				auto i = PT_single_count.find(k);
+				if (i != PT_single_count.end()) 
+					i->second++;
+				else 
+					PT_single_count[k] = 1;
+				single_maps.push_back(make_pair(get<2>(result.begin()->first),  k.first->get_gene()));
+				single_maps.push_back(make_pair(get<2>(result.begin()->second), k.second->get_gene()));
+			}
+			// if there are no valid PTs, discard
+			else ;
+#endif
+
 			prev_name = string(sam_name);
-			read_id++;
+			idx.clear();
+		}
+		// fix chromosome value
+		if (string(sam_rnext) == "=")
+			strcpy(sam_rnext, sam_rname);
+		// get chromosome values
+		int chr1 = ga.get_chromosome(sam_rname),
+			 chr2 = ga.get_chromosome(sam_rnext);
+		// check chromosomes
+		if (chr1 == -1 || chr2 == -1) { 
+			// do not process
+			line++; continue; 
+		}
+
+		// is it first mate?
+		if ((sam_flag & 0x8) || (sam_flag & 0x40)) {
+			auto k = idx_key(make_pair(chr1, sam_pos), 
+					make_pair(chr2, sam_pnext),
+					abs(sam_tlen), sam_flag & 0x100); // not primary alignment
+			auto i = idx.find(k);
+
+			// value: <<line1, line2>, <read1, read2>, <cigar1, cigar2>
+			if (i != idx.end()) {
+				get<0>(i->second) = make_tuple(line, string(sam_read), string(sam_cigar));					
+			}
+			else
+				idx.insert(make_pair(k, idx_val( make_tuple(line, string(sam_read), string(sam_cigar)), make_tuple(int64_t(-1), string(""), string("")) )));	
+		}
+		else {
+			auto k = idx_key(make_pair(chr2, sam_pnext), 
+					make_pair(chr1, sam_pos),
+					abs(sam_tlen), sam_flag & 0x100);
+			auto i = idx.find(k);
+
+			// value: <<line1, line2>, <read1, read2>, <cigar1, cigar2>
+			if (i != idx.end()) {
+				get<1>(i->second) = make_tuple(line, string(sam_read), string(sam_cigar));					
+			}
+			else
+				idx.insert(make_pair(k, idx_val( make_tuple(int64_t(-1), string(""), string("")), make_tuple(line, string(sam_read), string(sam_cigar)) )));	
 		}
 
 		read_length = max(read_length, (int)strlen(sam_read));
-		int chr = ga.get_chromosome(sam_rname);
-		if (chr == -1) { line++; continue; }
-		bool secondary = sam_flag & 0x100;
-
-		if (sam_flag & 0x8) { // nema paired enda!
-			parse_read(read_id, line, sam_pos, chr, sam_cigar, sam_read,
-								       -1,       0,   0, sam_cigar, sam_read);
-		}
-		else { // uh oh
-			if (string(sam_rnext) == "=")
-				strcpy(sam_rnext, sam_rname);
-			read___ rx(read_id, line, sam_pos, sam_flag, chr, sam_cigar, sam_read);
-			auto ix = short_index.find(key___( 
-						keyx___(sam_rname, sam_pos), keyx___(sam_rnext, sam_pnext), 
-						abs(sam_tlen), secondary));
-			
-			if (ix != short_index.end()) {
-				read___ r1 = ix->second, r2 = rx;
-				if (r2.sam_flag & 0x40) swap(r1, r2);
-				parse_read(read_id, r1.line, r1.sam_pos, r1.chr, r1.cigar.c_str(), r1.read.c_str(),
-										  r2.line, r2.sam_pos, r2.chr, r2.cigar.c_str(), r2.read.c_str());
-				short_index.erase(ix);
-			}
-			else short_index.insert(make_pair(
-				key___(keyx___(sam_rnext, sam_pnext), 
-					keyx___(sam_rname, sam_pos), abs(sam_tlen), secondary),
-				rx));
-		}
-
 		line++;
-
-		if (line % 8092 == 0) 
-			E("\r\t%16.2lf%%\t%'16d\t%'16d\t%'16d", 100.0 * double(ftell(fi)) / f_size, partial_transcripts_single.size(), reads.size(), line);
+		if (line % (1<<14) == 0) 
+			E("\r\t%5.2lf %'15d %'15d %'15d", 
+					100.0 * double(ftell(fi)) / f_size, PTs_set.size(), 
+					reads.size(), line
+			);
 	}
-	assert(short_index.size() == 0);
 	E("\n");
+
+	sort(single_maps.begin(), single_maps.end());
+	for(int i=1;i<single_maps.size();i++) {
+		if(single_maps[i].first==single_maps[i-1].first) {
+			E("OOOOOOOOOOOOOps!");
+			exit(1);
+		}
+	}
 
 	fclose(fi);
 }
 
+void resolve () {
+	foreach (r, reads) {
+		if (r->entries.size() == 1) {
+				single_maps.push_back(make_pair(
+							r->entries.begin()->line.first, 
+							r->entries.begin()->partial.first->get_gene()));
+				if (r->entries.begin()->partial.second) single_maps.push_back(make_pair(
+							r->entries.begin()->line.second, 
+							r->entries.begin()->partial.second->get_gene()));
+		}
+	}
+	reads.clear();
+	sort(single_maps.begin(), single_maps.end());
+	if (retain_junk)
+		sort(crappy_reads.begin(), crappy_reads.end());
+	
+	for(int i=1;i<single_maps.size();i++) {
+		if(single_maps[i].first==single_maps[i-1].first)
+		{
+			E("OOOOOOOOOOOOOps!");
+			exit(1);
+		}
+	}
+
+}
+
 void write_sam (const char *old_sam, const char *new_sam) {
 	FILE *fi = fopen(old_sam, "r"),
-		  *fo = fopen(new_sam, "w");
-	FILE *fl = fopen(LOG_FILE, "w");
+		 *fo = fopen(new_sam, "w");
 
-	char 		buffer[MAX_BUFFER];
-	char 		sam_name[MAX_BUFFER],
-		  		sam_rname[MAX_BUFFER],
-		  		sam_cigar[MAX_BUFFER],
-				sam_read[MAX_BUFFER],
-				sam_rnext[MAX_BUFFER];
-	uint32_t sam_flag, sam_pos;
-	int32_t  sam_pnext, sam_tlen;
-	uint8_t  sam_mapq;
+	FILE *fj;
+	if (!retain_junk || !strcmp(junk_file_path, "="))
+		fj = fo;
+	else
+		fj = fopen(junk_file_path, "w");
 
-	int wr = 0, 
+	// obtain the file size
+	fseek(fi, 0, SEEK_END);
+	int64_t f_size = ftell(fi);
+	fseek(fi, 0, SEEK_SET);
+
+
+	char buffer[MAX_BUFFER];
+	int wr = 0,
 		 di = 0,
-		 ix = 0;
-	int line = 0;
+		 i = 0,
+		 line = 0;
 
-	int read_id = -1;
-	string prev_name = "";
+	int j = 0;
 
+	E("\t%5s %15s\n", "%%", "SAM lines");
 	while (fgets(buffer, MAX_BUFFER, fi)) {
 		if (buffer[0] == '@') {	
 			fputs(buffer, fo);
 			continue;
 		}
-		//sscanf(buffer, "%s %u %s %u", sam_name, &sam_flag, sam_rname, &sam_pos);
-
-		sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
-				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
-		string name = sam_name; //fixname(sam_name, sam_flag);
-
-		if (prev_name != string(sam_name)) {
-			prev_name = string(sam_name);
-			read_id++;
-		}
-
-		int chr = ga.get_chromosome(sam_rname);
-		if (chr == -1) { 
-			fprintf(fl, "%40s discarded\n", name.c_str());
+		// TODO fix NH:i:...
+		if (i < single_maps.size() && line == single_maps[i].first) {
+			int l = strlen(buffer) - 1;
+			sprintf(buffer + l, " %s:A:%s\n", gene_sam_flag, 
+					single_maps[i].second ? single_maps[i].second->name.c_str() : "");
 			fputs(buffer, fo);
-			ix++;
-			line++;
-			continue; 
-		}
-
-
-		if (read_id >= reads.size()) {
-			E("Error: r_id > reads!\n");
-			abort();
-		}
-
-		const auto &ri = reads[read_id];
-		if (ri.entries.size() == 1 &&
-			((ri.entries.begin()->line.first == line) || 
-			(ri.entries.begin()->line.second == line)))
-		{
-//			const read::read_entry &re = ri->second.entries.begin()->second;
-
-//			assert(re.chromosome == chr);
-//			assert(re.position == sam_pos);
-
-		/*	fprintf(fl, "%40s %3d %16u %20s %10d %s\n",
-					name.c_str(), 
-					re.chromosome, re.position,
-					re.partial->transcript->name.c_str(), 
-					re.partial_start,
-					re.partial->signature.c_str());*/
-		
-			fputs(buffer, fo);
+			i++;
 			wr++;
 		}
-		else if (/*ri == reads.end() ||*/ ri.entries.size() == 0) {
-	//		fprintf(fl, "%40s discarded\n", name.c_str());
-			if(retain_junk)
-				fputs(buffer, fo);
-			ix++;
+		else if (retain_junk && j < crappy_reads.size() && line == crappy_reads[j]) {
+			fputs(buffer, fj);
+			j++;
 		}
-		else 
-			di++;
+		else di++;
 		line++;
+		if (line % (1<<14) == 0) 
+			E("\r\t%5.2lf %'15d", 100.0 * double(ftell(fi)) / f_size, line);
 	}
-	E("\tOK, written %'d, discarded %'d, forcefully retained %'d, total %'d\n", wr, di, ix, line);
+	E("\nOK, written %'d, discarded %'d, total %'d\n", wr, di, line);
+	E("      crappy  %'d, total %'d\n", j, wr + j);
 
 	fclose(fo);
 	fclose(fi);
-
-	fclose(fl);
+	if (fj != fo) fclose(fj);
 }
 
 /*******************************************************************************/
@@ -434,11 +561,11 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 		{ "help",    0, NULL, 'h' },
 		{ "gtf",  	 1, NULL, 'g' },
 		{ "junk",  	 1, NULL, 'j' },
-		{ "sam",		 1, NULL, 's' },
+		{ "sam",	 1, NULL, 's' },
 		{ "mode",	 1, NULL, 'm' },
 		{ NULL,     0, NULL,  0  }
 	};
-	const char *short_opt = "hjg:s:m:";
+	const char *short_opt = "hj:g:s:m:";
 	do {
 		opt = getopt_long (argc, argv, short_opt, long_opt, NULL);
 		switch (opt) {
@@ -448,6 +575,7 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 				strncpy(gtf, optarg, MAX_BUFFER);
 				break;
 			case 'j':
+				strncpy(junk_file_path, optarg, MAX_BUFFER);
 				retain_junk = true;
 				break;
 			case 's':
@@ -470,8 +598,12 @@ int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
 
 	E("Behold! Former Uniqorn Republic of Orman is starting!\n\tUsage: orman -g[gtf] -s[sam] -m[mode:(single|rescue|orman)] [new_sam]\n");
-	E("\tCompile time: %s\n", COMPILE_TIME);	
-	freopen(DEBUG_LOG_FILE, "w", stdout);
+	E("\tCompile time: %s\n", COMPILE_TIME);
+#ifdef LOGIFY
+	E("\tLog status: enabled\n");
+	flog = fopen(LOG_FILE, "w");
+#endif
+	//freopen(DEBUG_LOG_FILE, "w", stdout);
 
 	char sam[MAX_BUFFER],
 		  gtf[MAX_BUFFER],
@@ -484,7 +616,8 @@ int main (int argc, char **argv) {
 		E("-j specified; SAM file will contain junk reads!\n");
 
 	zaman_last();
-	
+
+
 	E("Parsing GTF file %s ...\n", realpath(gtf, buffer));
 	ga.parse_gtf(gtf);
 	E("done in %d seconds!\n", zaman_last());
@@ -493,6 +626,12 @@ int main (int argc, char **argv) {
 	parse_sam(sam);
 	E("done in %d seconds!\n", zaman_last());
 
+//	foreach(i, PTs_set) {
+//		L("%25s %20s %15d\n", i->transcript->name.c_str(), i->signature.c_str(), i->weight);
+//	}
+//	exit(0);
+
+#ifndef LOGIFY_ONLY
 	if (!strcmp(mode, "rescue"))
 		do_rescue(ga, reads);
 	else if (!strcmp(mode, "single"))
@@ -505,9 +644,14 @@ int main (int argc, char **argv) {
 	}
 
 	E("Writing result to %s ...\n", new_sam);
+	resolve();
+	E("Resolve done..., %d sec\n", zaman_last());
 	write_sam(sam, new_sam);
 	E("done in %d seconds!\n", zaman_last());
-	
+#endif
+#ifdef LOGIFY
+	fclose(flog);
+#endif
 
 	return 0;
 }

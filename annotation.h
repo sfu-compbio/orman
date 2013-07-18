@@ -14,11 +14,12 @@ public:
 		uint32_t start,
 					end;
 		int id;
+		string sid;
 		struct transcript *transcript;
 
 		exon (void) {}
-		exon (uint32_t s, uint32_t e) : 
-			start(s), end(e) {}
+		exon (uint32_t s, uint32_t e, const string &i) :
+			start(s), end(e), sid(i) {}
 		bool operator< (const exon &e) const {
 			return start < e.start;
 		}
@@ -42,6 +43,7 @@ public:
 	struct gene {
 		int chromosome;
 		map<string, transcript> transcripts;
+		string name;
 
 		gene (void) {}
 	};
@@ -56,7 +58,9 @@ private:
 
 public:
 	genome_annotation (void) {
+
 	}
+
 	void parse_gtf (const char *gtf_file);
 	int get_chromosome (const string &s) {
 		auto it = chromosomes.find(s);

@@ -10,14 +10,15 @@ using namespace boost::heap;
 
 struct cluster {
 	int id;
-	partial_transcript partial;
+	PT  partial;
 	// position -> [<fatreads ...>]
 	map<int, set<int> > fatreads;
+	int  coverage;
 	bool covered;
 
 	cluster (void) {}
-	cluster (int i, const partial_transcript &p) :
-		id(i), partial(p), covered(0) {}
+	cluster (int i, const PT &p) :
+		id(i), partial(p), covered(0), coverage(0) {}
 };
 vector<cluster> clusters;
 
@@ -33,10 +34,11 @@ vector<fatread> fatreads;
 
 /*****************************************************************************************/
 
-int partial_length (const partial_transcript &p)  {
+int partial_length (const PT &p)  {
 	return p.first->length;
 }
-int partial_weight (const partial_transcript &p) {
+
+int partial_weight (const PT &p) {
 	if (!p.second)
 		return 1000000 + p.first->weight;
 	else if (p.first->transcript == p.second->transcript)
@@ -47,17 +49,18 @@ int partial_weight (const partial_transcript &p) {
 
 void initialize_structures (vector<struct read> &reads) {
 	// assign clusters to partials
-	set<partial_transcript> partials;
+	set<PT> partials;
 	foreach (ri, reads)
 		foreach (re, ri->entries) 
 			partials.insert(re->partial);
-	
 	clusters.resize(partials.size());
 	int id = 0;
-	map<partial_transcript, int> cluster_index;
+	map<PT, int> cluster_index;
 	foreach (ci, partials) {
 		clusters[id] = cluster(id, *ci);
+		clusters[id].coverage += get_single_coverage(*ci); 
 		cluster_index[*ci] = id;
+
 	//	E("%s.%s %d\n", ci->transcript->name.c_str(), ci->signature.c_str(), id);
 		id++;
 	}
@@ -71,21 +74,17 @@ void initialize_structures (vector<struct read> &reads) {
 		if (r.entries.size() < 1)
 			continue;
 
-	//	E("%s -> ", ri->first.c_str());
-
 		// prepare and sort signature!
 		// SIG: <PT+PT1_loc>
-		map<partial_transcript, int> sig;
+		map<PT, int> sig;
 		foreach (ei, r.entries) 
 			sig.insert(make_pair(ei->partial, ei->partial_start.first));
 		// form signature
 		string signature = "";
 		foreach (si, sig) {
 			sprintf(buffer, "%llu+%d;", cluster_index[si->first], si->second);
-	//		E("%s.%s %d ", si->first->transcript->name.c_str(), si->first->signature.c_str(), cluster_index[si->first]);
 			signature += buffer;
 		}
-	//	E("\n");
 	
 		// add fatread to the index if it is not there
 		auto fi = fatread_index.find(signature);
@@ -98,7 +97,6 @@ void initialize_structures (vector<struct read> &reads) {
 			// initialize fatread
 			foreach (si, sig) {
 				int cluster = cluster_index[si->first];
-//				E("%d\n", cluster);
 				fatreads[fid].clusters[cluster] = si->second;
 				fatreads[fid].solution[cluster] = 0; // do not assign anything at the beginning
 			}
@@ -114,17 +112,16 @@ void initialize_structures (vector<struct read> &reads) {
 	for (int fi = 0; fi < fatreads.size(); fi++) {
 		assert(fatreads[fi].reads.size() > 0);
 		foreach (ci, fatreads[fi].clusters) {
-	//		if(ci->first==27)E("xaa\n");
 			clusters[ci->first].fatreads[ci->second].insert(fi);
 		}
 	}
 
-	/*int lc=0;
-	foreach (c, clusters) {
-		if (c->fatreads.size() == 0)
-			lc++;
+	// initialize coverage
+	for (int i = 0; i < clusters.size(); i++) {
+		foreach (pos, clusters[i].fatreads) 
+			foreach (fr, pos->second) // in fatreads
+				clusters[i].coverage += fatreads[*fr].reads.size();
 	}
-	E(">>%d\n",lc);*/
 
 	E("\t%'d fatreads, %'d clusters\n", fatreads.size(), clusters.size());
 }
@@ -159,9 +156,10 @@ int set_cover (int read_length) {
 	for (int i = 0; i < clusters.size(); i++) {
 		int covers = 0;
 		// count number of reads this set covers
-		foreach (pos, clusters[i].fatreads) 
-			foreach (fr, pos->second) // in fatreads
-				covers += fatreads[*fr].reads.size();
+		// foreach (pos, clusters[i].fatreads) 
+		//	foreach (fr, pos->second) // in fatreads
+		//		covers += fatreads[*fr].reads.size();
+		covers = clusters[i].coverage;
 
 		// calculate number of non-covered positions!
 		// and update the weight
@@ -205,6 +203,7 @@ int set_cover (int read_length) {
 
 				foreach (s, fatreads[*r].clusters) if (s->first != h.t->id) {
 					(*heap_handles[s->first]).cardinality -= fatreads[*r].reads.size();
+					(*heap_handles[s->first]).t->coverage -= fatreads[*r].reads.size();
 					heap.decrease(heap_handles[s->first]);
 				}
 				read_visited[*r] = 1;
@@ -212,16 +211,14 @@ int set_cover (int read_length) {
 		h.t->covered = true;
 	}
 
-
-
-	int not_covered = 0, ncr = 0;
+	//int not_covered = 0, ncr = 0;
 
 /*	foreach (c, clusters)
 		if (!c->covered)
 			not_covered++;
 	E("\tNot covered %d sets\n", not_covered);
 	not_covered=0;*/
-
+	/*
 	foreach (fr, fatreads) {
 		char cv = 0;
 		foreach (t, fr->clusters)
@@ -233,8 +230,8 @@ int set_cover (int read_length) {
 			//foreach(cx, fr->clusters)
 			//	E("\t%d %d %.2lf\n", clusters[cx->first].covered, (*heap_handles[cx->first]).cardinality, (*heap_handles[cx->first]).weight);
 		}
-	}
-	E("\t%'d non-covered fatreads (%'d reads)\n", not_covered, ncr);
+	}*/
+	//E("\t%'d non-covered fatreads (%'d reads)\n", not_covered, ncr);
 
 	return mincover;
 }
@@ -248,9 +245,10 @@ void probabilistic_assign (void) {
 			if (clusters[c->first].covered) {
 				// count number of reads this set covers
 				int cnt = 0;
-				foreach (pos, clusters[c->first].fatreads) 
-					foreach (fx, pos->second) // in fatreads
-						cnt += fatreads[*fx].reads.size();
+				//foreach (pos, clusters[c->first].fatreads) 
+				//	foreach (fx, pos->second) // in fatreads
+				//		cnt += fatreads[*fx].reads.size();
+				cnt = clusters[c->first].coverage;
 				total += cnt;
 				counts.push_back(make_pair(cnt, c->first));
 			}

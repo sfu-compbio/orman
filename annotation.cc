@@ -64,9 +64,12 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 
 			auto &g = get_or_insert(genes, attributes["gene_id"]);
 			transcript &t = get_or_insert(g.transcripts, attributes["transcript_id"]);
-			t.exons.push_back(exon(gtf_start, gtf_end));
 			
+			assert(attributes.find("partial_ex") != attributes.end());
+			t.exons.push_back(exon(gtf_start, gtf_end, attributes["partial_ex"]));
+
 			g.chromosome = chromosome;
+			g.name = attributes["gene_id"];
 		}
 	}
 	transcript_count = 0;

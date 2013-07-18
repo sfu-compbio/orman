@@ -8,57 +8,41 @@
 
 using namespace std;
 
-struct partial_transcript_single {
+struct PT_single {
 	genome_annotation::transcript *transcript;
 	string signature;
 	int    length;
 	int 	 weight;
 
-	partial_transcript_single (void) {}
-	partial_transcript_single (genome_annotation::transcript *t, const string &s, int l, int w) : 
+	PT_single (void) {}
+	PT_single (genome_annotation::transcript *t, const string &s, int l, int w) : 
 		transcript(t), signature(s), length(l), weight(w) {}
 
-	bool operator== (const partial_transcript_single &s) const {
+	bool operator== (const PT_single &s) const {
 		return (transcript == s.transcript && signature == s.signature);
 	}
-	bool operator< (const partial_transcript_single &s) const {
+	bool operator< (const PT_single &s) const {
 		return (transcript < s.transcript || (transcript == s.transcript && signature < s.signature));
 	}
+
+	genome_annotation::gene *get_gene(void) const {
+		return transcript->gene;
+	}
 };
+typedef PT_single 			PTs;
+typedef const PT_single* 	PTsp;
+typedef pair<PTsp, PTsp> 	PT;  
+int get_single_coverage(const PT &p);
 
-/*struct partial_transcript {
-	const partial_transcript_single *p1, *p2;
-
-	partial_transcript(const partial_transcript_single *x1, const partial_transcript_single *x2) :
-		p1(x1), p2(x2) {}
-
-	bool operator< (const partial_transcript &s) const {
-		return (!p2 || p1<s.p1 || (p1==s.p1&&p2<s.p2));
-	}
-
-	int length () const {
-		return p1->length;
-	}
-	int weight () const {
-		if (!p2)
-			return 1000000 + p1->weight;
-		else if (p1->transcript == p2->transcript)
-			return p1->weight + p2->weight;
-		else 
-			return p1->weight + p2->weight + 100000;
-	}
-};*/
-
-typedef pair<const partial_transcript_single*, const partial_transcript_single*> partial_transcript;  
 struct read {
 	struct read_entry {
-		partial_transcript partial;
-		pair<uint32_t, uint32_t> position, partial_start;
-		pair<int, int> line;
+		PT						 		 partial;
+		pair<uint32_t, uint32_t> partial_start;
+		pair<int, int> 			 line;
 		
 		read_entry (void) {}
-		read_entry (const partial_transcript &p, const pair<int, int> &l, const pair<uint32_t, uint32_t> &po, const pair<uint32_t, uint32_t> &s) : 
-			partial(p), line(l), position(po), partial_start(s) {}
+		read_entry (const PT &p, const pair<int, int> &l, const pair<uint32_t, uint32_t> &s) : 
+			partial(p), line(l), partial_start(s) {}
 	};
 	vector<read_entry> entries;
 };
