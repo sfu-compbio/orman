@@ -9,10 +9,11 @@
 using namespace std;
 
 struct PT_single {
+	// TODO gene only for now
 	genome_annotation::transcript *transcript;
 	string signature;
-	int    length;
-	int 	 weight;
+	int length;
+	int weight;
 
 	PT_single (void) {}
 	PT_single (genome_annotation::transcript *t, const string &s, int l, int w) : 
@@ -31,12 +32,22 @@ struct PT_single {
 };
 typedef PT_single 			PTs;
 typedef const PT_single* 	PTsp;
-typedef pair<PTsp, PTsp> 	PT;  
+
+struct PT {
+	PTsp first;
+	PTsp second;
+
+	PT() : first(0), second(0) {}
+	PT(PTsp a, PTsp b): first(a), second(b) {}
+	bool operator== (const PT &x) const { return first==x.first && second==x.second; }
+	bool operator< (const PT &x) const { return first<x.first || (first==x.first && second<x.second); }
+};
+//ypedef pair<PTsp, PTsp> 	PT;  
 int get_single_coverage(const PT &p);
 
 struct read {
 	struct read_entry {
-		PT						 		 partial;
+		PT partial;
 		pair<uint32_t, uint32_t> partial_start;
 		pair<int, int> 			 line;
 		
@@ -45,6 +56,9 @@ struct read {
 			partial(p), line(l), partial_start(s) {}
 	};
 	vector<read_entry> entries;
+//	int solution;
+
+//	read () : solution(0) {}
 };
 
 #endif // COMMON_H__
