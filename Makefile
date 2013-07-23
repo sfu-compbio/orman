@@ -36,6 +36,9 @@ clean:
 #tools:
 #	g++ $(LDFLAGS) -o simulator-mea common.cc simulator.cc
 
+test:
+	$(CF) -DIL_STD -I $(CPLEXINC) -I $(CONCERTINC) $(LDFLAGS) tools/test.cc -o test
+
 
 
 

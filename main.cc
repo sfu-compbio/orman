@@ -66,12 +66,21 @@ struct indel {
 
 set<PTs> PTs_set;
 map<PT, int> PT_single_count;
+map<pair<PT, int>, int> PT_single_pos_count;
 vector<struct read> reads;
 genome_annotation ga;
 
 int get_single_coverage(const PT &p) {
 	auto i = PT_single_count.find(p);
 	if (i == PT_single_count.end())
+		return 0;
+	else 
+		return i->second;
+}
+
+int get_single_coverage(const PT &p, int k) {
+	auto i = PT_single_pos_count.find(make_pair(p, k));
+	if (i == PT_single_pos_count.end())
 		return 0;
 	else 
 		return i->second;
@@ -294,16 +303,17 @@ void parse_read (int64_t line1, uint32_t start_pos1, int chromosome1, const char
 		// first mate HAS TO BE VALID!
 		if (pt1) {
 			// special case if there is no valid pair
-			bool with_null = false;
+			bool no_null = false;
 			if (candidates2.size()) foreach (ci2, candidates2) {
 				int starting_position2 = 0;
 				PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2);
 				if (pt2) 
 					result.insert(make_pair(make_tuple(pt1, starting_position1, line1), make_tuple(pt2, starting_position2, line2)));
-				with_null |= (pt2 != 0);
+				no_null |= (pt2 != 0);
 			}
-			if (with_null)
+			if (!no_null) {
 				result.insert(make_pair(make_tuple(pt1, starting_position1, line1), make_tuple((PTsp)0, 0, line2)));
+			}
 		}
 	}
 #endif
@@ -365,7 +375,7 @@ void parse_sam (const char *sam_file) {
 			_sline1 = prev_name;
 			_sline2 = prev_name + "/REV";
 		#endif
-
+			//L("%s %d ", prev_name.c_str(), idx.size());
 			foreach (i, idx) {
 				auto &r1 = i->second.first,
 					  &r2 = i->second.second;
@@ -380,6 +390,13 @@ void parse_sam (const char *sam_file) {
 				}
 				result.insert(tmp.begin(), tmp.end());
 			}
+			/*L("%d ", result.size());
+			foreach (r, result) {
+				L("%s:%s.%d_", get<0>(r->first)->transcript->name.c_str(), get<0>(r->first)->signature.c_str(), get<1>(r->first));
+				if(get<0>(r->second)) L("%s:%s.%d", get<0>(r->second)->transcript->name.c_str(), get<0>(r->second)->signature.c_str(), get<1>(r->second));
+				L(" ");
+			}
+			L("\n");*/
 
 		#ifndef LOGIFY_ONLY
 			// process ONLY if we have multi-mappings!
@@ -403,8 +420,17 @@ void parse_sam (const char *sam_file) {
 					i->second++;
 				else 
 					PT_single_count[k] = 1;
+
+				/// TODO only first trsanscript
+				auto j = PT_single_pos_count.find(make_pair(k, get<1>(result.begin()->first)));
+				if (j != PT_single_pos_count.end()) 
+					j->second++;
+				else 
+					PT_single_pos_count[make_pair(k, get<1>(result.begin()->first))] = 1;
+
 				single_maps.push_back(make_pair(get<2>(result.begin()->first),  k.first->get_gene()));
-				single_maps.push_back(make_pair(get<2>(result.begin()->second), k.second->get_gene()));
+				if (k.second)
+					single_maps.push_back(make_pair(get<2>(result.begin()->second), k.second->get_gene()));
 			}
 			// if there are no valid PTs, discard
 			else ;

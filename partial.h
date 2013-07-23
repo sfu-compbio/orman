@@ -44,6 +44,7 @@ struct PT {
 };
 //ypedef pair<PTsp, PTsp> 	PT;  
 int get_single_coverage(const PT &p);
+int get_single_coverage(const PT &p, int k);
 
 struct read {
 	struct read_entry {

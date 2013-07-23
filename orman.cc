@@ -13,6 +13,7 @@ struct cluster {
 	PT  partial;
 	// position -> [<fatreads ...>]
 	map<int, set<int> > fatreads;
+	vector<int> single; // single coverage
 	int  coverage;
 	bool covered;
 
@@ -31,6 +32,17 @@ struct fatread {
 	map<int, int> solution;
 };
 vector<fatread> fatreads;
+
+string print_pt(const PT &p)  {
+	char c[500];
+	PTsp pt1 = p.first, pt2=p.second;
+	sprintf(c, "%s_%s", string(pt1->transcript->gene->name + "." + pt1->signature).c_str(), pt2?string(pt1->transcript->gene->name + "." + pt1->signature).c_str():"");
+	return string(c);
+}
+
+string print_pt(const cluster *p)  {
+	return print_pt(p->partial);
+}
 
 /*****************************************************************************************/
 
@@ -58,7 +70,11 @@ void initialize_structures (vector<struct read> &reads) {
 	map<PT, int> cluster_index;
 	foreach (ci, partials) {
 		clusters[id] = cluster(id, *ci);
-		clusters[id].coverage += get_single_coverage(*ci); 
+		clusters[id].single.resize(partial_length(*ci));
+		for (int k = 0; k < clusters[id].single.size(); k++) {
+			clusters[id].single[k] = get_single_coverage(*ci, k);
+			clusters[id].coverage += clusters[id].single[k];
+		}
 		cluster_index[*ci] = id;
 
 		//	E("%s.%s %d\n", ci->transcript->name.c_str(), ci->signature.c_str(), id);
@@ -288,177 +304,17 @@ void probabilistic_assign (void) {
 	}
 }
 
-// DANGEROUS ZONE
-// I TAKE NO RESPONSIBILITY
-// FOR THE CODE BELOW
-// (in fact, i am not quite sure what it exactly does... kinda magic ...)
-//
-
-typedef struct { 
-	map<int, int> poscnt; // graph, X->Y for non-zeros (most of the time)
-	map<int, int> poscnt_; // graph, X->Y for non-zeros (most of the time)
-} PLOT_STAT;
-vector<PLOT_STAT> _levels;
-
-void cplex_api (IloEnv &env, const vector<int> &component, char *model_id) {
-	if(!_levels.size()) _levels.resize( clusters.size() );
-	foreach (c, component) {
-		foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-			int s = 0; 
-			foreach (r, p->second) // r: fatread
-				s += fatreads[*r].solution[*c];
-			_levels[*c].poscnt_[p->first] = s;
-		}
-	}
-
-
-	E("\tCPLEX\n");
-	// refine the read sets ...
-	// [read] -> [[set] -> [var]]
-	static vector<map<int, IloIntVar> > read_var;
-	if (read_var.size() == 0) {
-		read_var.resize(fatreads.size());
-		for (int i = 0; i < fatreads.size(); i++) {
-			foreach (s, fatreads[i].clusters) 
-				read_var[i][s->first] = IloIntVar(env);
-		}
-	}
-
-	//E("Set size %d\n", component.size());
-	//fflush(stdout);
-	IloModel model(env, model_id);
-
-	// Objective: MINIMIZE SUM(D_transcript)
-	IloNumVarArray d(env, component.size(), 0, IloInfinity);
-	model.add(IloMinimize(env, IloSum(d)));
-
-	int rc = 0;
-	foreach (c, component) {
-		foreach (p, clusters[*c].fatreads)
-			rc += p->second.size();
-	}
-	E("Here %d fatreads\n", rc);
-
-	// Bounds: D_transcript
-	foreachidx (c, ci, component) {
-		//IloExprArray nr(env);
-		vector<IloExpr> nr;
-
-		// get NR
-		IloExpr nrsum(env);
-		foreach (pos, clusters[*c].fatreads) { 
-			nr.push_back(IloExpr(env));
-			foreach (r, pos->second)
-				nr.back() += read_var[*r][*c]; 
-			nrsum += nr.back();
-		}
-
-		nrsum /= (double)partial_length(clusters[*c].partial);
-		foreachidx (pos, posi, clusters[*c].fatreads) {
-			model.add(nrsum + d[ci] - nr[posi] >= 0);
-			model.add(nrsum - d[ci] - nr[posi] <= 0);
-		}
-		nrsum.end();
-		foreach (n, nr)
-			n->end();
-	}
-
-	// Constraint: SUM(Rij) = |R|
-	set<int> component_fatreads;
-	foreach (c, component) 
-		foreach (pos, clusters[*c].fatreads) 
-			foreach (r, pos->second)
-				component_fatreads.insert(*r);
-	foreach (r, component_fatreads) { 
-		IloExpr expr(env);
-		foreach (s, read_var[*r])
-			expr += s->second;
-		model.add(expr == ::fatreads[*r].reads.size());
-		expr.end();
-	}
-	component_fatreads.clear();
-
-	//E("Starting CPLEX ...\n");
-	IloCplex cplex(model);
-	cplex.setParam(IloCplex::Threads, 3);
-	cplex.setParam(IloCplex::TiLim, 120);
-	cplex.exportModel(model_id);
-	cplex.setOut(env.getNullStream());
-	bool ok = 0;
-	try {
-		cplex.solve();
-		E("\tSet size %d, cplex status: %d, opt. value %.3lf\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue());
-		ok = 1;
-	}
-	catch (IloException &ex) {
-		E("\tException! %s\n", ex.getMessage());
-		//smooth(component);
-		abort();
-	}
-
-	if (ok) foreach (r, component_fatreads) { 
-		int sol = 0;
-		foreach (s, read_var[*r]) {
-			int res = cplex.getValue(s->second);
-			if (res)
-				::fatreads[*r].solution[s->first] = res;
-			sol += res;
-		}
-		assert(sol == ::fatreads[*r].reads.size());
-	}
-
-	E("\tCPLEX %'.2lfM --> ", env.getTotalMemoryUsage()/(1024*1024.0));
-
-	cplex.clearModel();
-	cplex.end();
-	d.endElements();
-	d.end();
-	IloExtractableArray del(env);
-	for (IloModel::Iterator i(model); i.ok(); ++i)
-		del.add(*i);
-	del.add(model);
-	del.endElements();
-	del.end();
-
-	foreach (c, component) {
-		foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-			int s = 0; 
-			foreach (r, p->second) // r: fatread
-				s += fatreads[*r].solution[*c];
-			_levels[*c].poscnt[p->first] = s;
-		}
-	}
-	foreach (c, component) {
-		PTsp pt1 = clusters[*c].partial.first;
-		L("# %s:%d:%d_", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight);
-		pt1 = clusters[*c].partial.second;
-		if (pt1) L("%s:%d:%d \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight); else L("\n");
-		foreach (x, _levels[*c].poscnt_) L("(%d,%d) ", x->first,x->second); L("\n");
-		foreach (x, _levels[*c].poscnt)  L("(%d,%d) ", x->first,x->second); L("\n");
-	}
-
-
-
-	E("CPLEX %'.2lfM", env.getTotalMemoryUsage()/(1024*1024.0));
-	E("\n");
-
-}
-
-
 typedef struct { 
 	double avg; // average value
 	int maxpos; // maxpeak
 	int minpos;
-	map<int, int> poscnt; // graph, X->Y for non-zeros (most of the time)
-	map<int, int> poscnt_; // graph, X->Y for non-zeros (most of the time)
+	vector<int> poscnt; // graph, X->Y for non-zeros (most of the time)
+	vector<int> poscnt_; // graph, X->Y for non-zeros (most of the time)
 } CLUSTER_STAT;
 #define MIN3(a,b,c)  (min(a,min(b,c)))
 
 /* component -- vector id cluster ids to be smoothed */
-int smooth (const vector<int> &component) {
-
-
-
+int smooth (const vector<int> &component, int iter_limit = 5000) {
 	// TODO: This dares to be UGLY!
 	static vector<CLUSTER_STAT> levels;
 	if (!levels.size()) 
@@ -472,12 +328,17 @@ int smooth (const vector<int> &component) {
 		int l = -1; // max peak
 		int L = INT_MAX; // min peak
 		levels[*c].avg = 0;
+		levels[*c].poscnt.resize(clusters[*c].single.size());
+		levels[*c].poscnt_.resize(clusters[*c].single.size());
+		for (int i=0;i<clusters[*c].single.size();i++)
+	 		levels[*c].poscnt[i] = levels[*c].poscnt_[i] = clusters[*c].single[i];
 		foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
 			// sum of weights
 			int s = 0; 
 			foreach (r, p->second) // r: fatread
 				s += fatreads[*r].solution[*c];
 			// new max peak?
+			s += clusters[*c].single[p->first];
 			if (s > l) {
 				l = s;
 				levels[*c].maxpos = p->first;
@@ -486,13 +347,15 @@ int smooth (const vector<int> &component) {
 				L = s;
 				levels[*c].minpos = p->first;
 			}
+			s -= clusters[*c].single[p->first];
 			// value on this position
 			// we only consider non-zero positions here
-			levels[*c].poscnt[p->first] = s;
-			levels[*c].poscnt_[p->first] = s;
-			levels[*c].avg += s;
+			levels[*c].poscnt[p->first] += s;
+			levels[*c].poscnt_[p->first] += s;
 			//	E("(%d -> %d) ", p->first, s);
 		}
+		for (int i=0;i<clusters[*c].single.size();i++)
+			levels[*c].avg += levels[*c].poscnt[i];
 		levels[*c].avg /= partial_length(clusters[*c].partial);
 		sum += l;
 	}
@@ -504,7 +367,7 @@ int smooth (const vector<int> &component) {
 		iters++;
 		alive = 0;
 		// iteration limit
-		if (iters > 500000) 
+		if (iters > iter_limit) 
 			break;
 
 		foreach (c, component) {
@@ -513,7 +376,7 @@ int smooth (const vector<int> &component) {
 			// its peak
 			int c_pos = levels[F].maxpos;
 			// weird case? if so, skip! YES this happens a lot
-			if (levels[F].poscnt[c_pos] == 0) 
+			if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
 				continue;
 			if (levels[F].poscnt[c_pos] <= int(levels[F].avg)) // already avearage?
 				continue;
@@ -535,7 +398,9 @@ int smooth (const vector<int> &component) {
 								levels[T].poscnt[levels[T].maxpos] - levels[T].poscnt[t_pos], // destination cap
 								fatreads[*fr].solution[F], // source cap
 								levels[F].poscnt[c_pos] - int(levels[F].avg) // do not go below the source average though  
-								);
+						);
+						//ADDED NEW!!!
+						how_much = min(how_much, levels[F].poscnt[c_pos] - clusters[F].single[c_pos]);
 
 						//	update results, T part
 						fatreads[*fr].solution[T] += how_much;
@@ -552,10 +417,10 @@ int smooth (const vector<int> &component) {
 						if (c_pos == levels[F].maxpos) { // should we update max level of F?
 							// ol is old maximum
 							int ol = levels[F].poscnt[c_pos] + how_much, l = -1;
-							foreach (p, levels[F].poscnt) 
-								if (p->second > l) {
-									l = p->second;
-									levels[F].maxpos = p->first;
+							for (int _p = 0; _p < levels[F].poscnt.size(); _p++) 
+								if (levels[F].poscnt[_p] > l && levels[F].poscnt[_p] > clusters[F].single[_p]) {
+									l = levels[F].poscnt[_p];
+									levels[F].maxpos = _p;
 								}
 							// updated! adjust reduced value
 							// TODO maybe this is not correct. who cares anyway?
@@ -563,7 +428,7 @@ int smooth (const vector<int> &component) {
 						}
 
 						// done with F
-						if (levels[F].poscnt[c_pos] == 0) 
+						if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
 							goto end;
 						// again done with F (this can happen because of rounding)
 						if (levels[F].poscnt[c_pos] <= int(levels[F].avg))
@@ -580,16 +445,196 @@ end:; // goto ftw!
 
 	foreach (c, component)
 	{
-		PTsp pt1 = clusters[*c].partial.first;
-		L("# %s:%d:%d_", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight);
-		pt1 = clusters[*c].partial.second;
-		if (pt1) L("%s:%d:%d \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight); else L("\n");
-		foreach (x, levels[*c].poscnt_) L("(%d,%d) ", x->first,x->second); L("\n");
-		foreach (x, levels[*c].poscnt)  L("(%d,%d) ", x->first,x->second); L("\n");
+		L("# %s\n", print_pt(clusters[*c].partial).c_str());
+		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt_[i]); L("\n");
+		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt [i]); L("\n");
 	}
 
 	//	L("Set sz %'d, iters %'d, ini %'d, red %'d\n", component.size(), iters, sum, red);
 }
+
+
+// DANGEROUS ZONE
+// I TAKE NO RESPONSIBILITY
+// FOR THE CODE BELOW
+// (in fact, i am not quite sure what it exactly does... kinda magic ...)
+//
+
+typedef struct { 
+	map<int, int> poscnt; // graph, X->Y for non-zeros (most of the time)
+	map<int, int> poscnt_; // graph, X->Y for non-zeros (most of the time)
+} PLOT_STAT;
+vector<PLOT_STAT> _levels;
+
+void cplex_api (const vector<int> &component, char *model_id) {
+	// if(!_levels.size()) _levels.resize( clusters.size() );
+	// foreach (c, component) {
+	// 	for (int i=0;i<clusters[*c].single.size();i++)
+	// 		_levels[*c].poscnt_[i]=clusters[*c].single[i];
+	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
+	// 		int s = 0; 
+	// 		foreach (r, p->second) // r: fatread
+	// 			s += fatreads[*r].solution[*c];
+	// 		_levels[*c].poscnt_[p->first] += s;
+	// 	}
+	// }
+
+
+	// L("\t"); foreach(c, component)L("%s ", print_pt(&clusters[*c]).c_str());L("\n");
+	// refine the read sets ...
+	// [read] -> [[set] -> [var]]
+
+	IloEnv env;
+
+
+	static vector<map<int, IloIntVar> > read_var;
+	read_var.resize(fatreads.size());
+	for (int i = 0; i < fatreads.size(); i++) {
+		foreach (s, fatreads[i].clusters)  {
+			read_var[i][s->first] = IloIntVar(env);
+		}
+	}
+
+	//E("Set size %d\n", component.size());
+	//fflush(stdout);
+	IloModel model(env, model_id);
+
+	// Objective: MINIMIZE SUM(D_transcript)
+	IloNumVarArray d(env, component.size(), 0, IloInfinity);
+	d.setNames("D");
+	model.add(IloMinimize(env, IloSum(d)));
+
+	int rc = 0;
+	foreach (c, component) {
+		foreach (p, clusters[*c].fatreads)
+			rc += p->second.size();
+	}
+	L("Here %d fatreads\n", rc);
+
+	// Bounds: D_transcript
+	for (int ci = 0; ci < component.size(); ci++) {
+		int c = component[ci];
+
+		//IloExprArray nr(env);
+		vector<IloExpr> nr;
+		// get NR
+		IloExpr nrsum(env);
+		foreach (pos, clusters[c].fatreads) { 
+			nr.push_back(IloExpr(env));
+			nr.back() += (double)clusters[c].single[pos->first];
+			foreach (r, pos->second) {
+				nr.back() += read_var[*r][c]; 
+			}
+			nrsum += nr.back();
+		}
+
+		for (int i = 0; i < clusters[c].single.size(); i++)
+			if (clusters[c].fatreads.find(i) == clusters[c].fatreads.end()) {
+				nrsum += (double)clusters[c].single[i];
+			}
+		nrsum /= (double)partial_length(clusters[c].partial);
+		foreachidx (pos, posi, clusters[c].fatreads) {
+			model.add(nrsum + d[ci] - nr[posi] >= 0);
+			model.add(nrsum - d[ci] - nr[posi] <= 0);
+		}
+		nrsum.end();
+		foreach (n, nr)
+			n->end();
+	}
+
+	// Constraint: SUM(Rij) = |R|
+	set<int> component_fatreads;
+	foreach (c, component) 
+		foreach (pos, clusters[*c].fatreads) 
+			foreach (r, pos->second)
+				component_fatreads.insert(*r);
+	foreach (r, component_fatreads) { 
+		IloExpr expr(env);
+		foreach (s, read_var[*r])
+			expr += s->second;
+		model.add(expr == fatreads[*r].reads.size());
+		expr.end();
+	}
+	component_fatreads.clear();
+
+	//E("Starting CPLEX ...\n");
+	try {
+		IloCplex cplex(model);
+		cplex.setParam(IloCplex::Threads, 2);
+		cplex.setParam(IloCplex::TiLim, 120);
+//		cplex.setParam(IloCplex::TreLim, 8162);
+//		cplex.setParam(IloCplex::WorkMem, 8162);
+		cplex.exportModel((string("models/") + model_id).c_str());
+		cplex.setOut(env.getNullStream());
+		bool ok = 0;
+
+		cplex.solve();
+		L("\tSet size %d, cplex status: %d, opt. value %.3lf\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue());
+		ok = 1;
+
+		if (ok) for (int r = 0; r < read_var.size(); r++) { 
+			int sol = 0;
+			bool solved = false;
+			foreach (s, read_var[r]) if (find(component.begin(), component.end(), s->first) != component.end()) {
+				solved = true;
+				int res = IloRound(cplex.getValue(s->second));
+				fatreads[r].solution[s->first] = res;
+				sol += res;
+			}
+
+			/*if(solved && sol != fatreads[r].reads.size()) {
+				E("sol %d fr %d\n", sol , fatreads[r].reads.size());
+				abort();
+			}*/
+		}
+
+		L("\tCPLEX %'.2lfM --> ", env.getTotalMemoryUsage()/(1024*1024.0));
+
+		cplex.clearModel();
+		cplex.end();
+		d.endElements();
+		d.end();
+		IloExtractableArray del(env);
+		for (IloModel::Iterator i(model); i.ok(); ++i)
+			del.add(*i);
+		del.add(model);
+		del.endElements();
+		del.end();
+	}
+	catch (IloException &ex) {
+		L("\tException! %s\n", ex.getMessage());
+		ex.end();
+		smooth(component);
+	}
+
+
+	// foreach (c, component) {
+	// 	for (int i=0;i<clusters[*c].single.size();i++)
+	// 		_levels[*c].poscnt[i]=clusters[*c].single[i];
+	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
+	// 		int s = 0; 
+	// 		foreach (r, p->second) // r: fatread
+	// 			s += fatreads[*r].solution[*c];
+	// 		_levels[*c].poscnt[p->first] += s;
+	// 	}
+	// }
+	// foreach (c, component) {
+	// 	PTsp pt1 = clusters[*c].partial.first;
+	// 	L("# %s:%d:%d_", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight);
+	// 	pt1 = clusters[*c].partial.second;
+	// 	if (pt1) L("%s:%d:%d \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight); else L("\n");
+	// 	foreach (x, _levels[*c].poscnt_) L("(%d,%d) ", x->first,x->second); L("\n");
+	// 	foreach (x, _levels[*c].poscnt)  L("(%d,%d) ", x->first,x->second); L("\n");
+	// }
+
+
+	L("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
+	E("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
+
+	env.end();
+}
+
+
 
 // DFS from cluster i; n_sets is component big-bang
 void connected_component_dfs (int i, vector<int> &n_sets, vector<char> &visited) {
@@ -605,7 +650,6 @@ void connected_component_dfs (int i, vector<int> &n_sets, vector<char> &visited)
 }
 
 void connected_components (void) {
-	IloEnv env;
 
 	vector<char> visited(clusters.size(), 0);
 	int cc_count = 0, // how many components?
@@ -624,13 +668,12 @@ void connected_components (void) {
 					rc += p->second.size();
 			}
 
-			if (component.size() > 1)
-				L("\tBig component: %d transcripts, %d fatreads\n", component.size(), rc);
+			// if (component.size() > 1)
+			L("\tComponent: %d transcripts, %d fatreads\n", component.size(), rc);
 			char c[200];
 			sprintf(c, "model_%d.lp", cc_count);
-		//	cplex_api(env, component, c);
-
-		//	smooth(component);
+		//	cplex_api(component, c);
+			smooth(component, 1000);
 
 			// done, whoa whoa whoa!
 		/*	if (component.size() < 2) 
@@ -646,7 +689,6 @@ void connected_components (void) {
 		}		
 
 	E("\tCover count %'d [%'d]\n", cc_count, cc_sets);
-	env.end();
 }
 
 void update_solution (vector<struct read> &reads) {
