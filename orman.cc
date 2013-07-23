@@ -76,22 +76,8 @@ void initialize_structures (vector<struct read> &reads) {
 			clusters[id].coverage += clusters[id].single[k];
 		}
 		cluster_index[*ci] = id;
-
-		//	E("%s.%s %d\n", ci->transcript->name.c_str(), ci->signature.c_str(), id);
 		id++;
 	}
-	//	L("PSZ=%d",partials.size());
-	PT prev;
-	/*	foreach (pt, partials)
-		{
-		PTsp pt1 = pt->first;
-		if (pt->first ==prev.first) L("="); else L("!"); 
-		if (pt->second ==prev.second) L("="); else L("!"); prev=*pt;
-		L("+ ");
-		L("%s:%d:%d:%x + ", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight, pt1);
-		pt1 = pt->second;
-		if (pt1) L("%s:%d:%d:%x \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight, pt1); else L("\n");
-		}*/
 	partials.clear();
 
 	// initialize fatreads
@@ -183,34 +169,21 @@ int set_cover (int read_length) {
 	vector<fibonacci_heap<heap_t>::handle_type> heap_handles(clusters.size());
 	for (int i = 0; i < clusters.size(); i++) {
 		int covers = 0;
-		// count number of reads this set covers
-		// foreach (pos, clusters[i].fatreads) 
-		//	foreach (fr, pos->second) // in fatreads
-		//		covers += fatreads[*fr].reads.size();
 		covers = clusters[i].coverage;
-
 		// calculate number of non-covered positions!
 		// and update the weight
 		double weight = partial_weight(clusters[i].partial);
-		//E("[%10.2lf %5d] ", weight, clusters[i].partial->length);
 		int notcovered = 0;
 		int prev = 0;
-		foreach (fr, clusters[i].fatreads) { // pos -> <fatreads>
+		foreach (fr, clusters[i].fatreads) {
 			if (fr->first > prev)
 				notcovered += fr->first - prev;
 			prev = fr->first + read_length;
 		}
 		if (prev < partial_length(clusters[i].partial))
 			notcovered += partial_length(clusters[i].partial) - prev;
-		if (notcovered > 1) {
-			//	LE("Set %s len %d notc %d\n", t->signature.c_str(), t->length, notcovered);
-			//	TODO talk with Phuong
-			//	E(" (%5d / %5d) ", notcovered, clusters[i].partial->length);
-			weight *= (1 + 
-					10.0 * double(notcovered) / partial_length(clusters[i].partial));
-		}
-
-		// E("> %15s %10s %5d %.2lf\n", clusters[i].partial->transcript->name.c_str(), clusters[i].partial->signature.c_str(), covers, weight);
+		if (notcovered > 1)
+			weight *= (1 + 10.0 * double(notcovered) / partial_length(clusters[i].partial));
 		heap_handles[i] = heap.push(heap_t(&clusters[i], covers, weight));
 		assert(covers > 0);
 	}
@@ -220,7 +193,6 @@ int set_cover (int read_length) {
 	int mincover = 0;
 	while (!heap.empty()) {
 		heap_t h = heap.top(); heap.pop();
-
 		if (h.cardinality == 0)
 			break;
 		mincover++;
@@ -228,8 +200,6 @@ int set_cover (int read_length) {
 		foreach (pos, h.t->fatreads) 
 			foreach (r, pos->second) // in fatreads 
 			if (!read_visited[*r]) {
-				//	fatreads[*r].solution[ h.t->id ] += fatreads[*r].reads.size(); // assign ALL to this set
-
 				foreach (s, fatreads[*r].clusters) if (s->first != h.t->id) {
 					(*heap_handles[s->first]).cardinality -= fatreads[*r].reads.size();
 					(*heap_handles[s->first]).t->coverage -= fatreads[*r].reads.size();
@@ -240,52 +210,20 @@ int set_cover (int read_length) {
 		h.t->covered = true;
 	}
 
-	/*	foreach (c, clusters)
-		{
-		PTsp pt1 = c->partial.first;
-		L("%d ", c->covered);
-		L("%s:%d:%d + ", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight);
-		pt1 = c->partial.second;
-		if (pt1)			L("%s:%d:%d \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight); else L("\n");
-		}
-		*/
-	//int not_covered = 0, ncr = 0;
-
-	/*	foreach (c, clusters)
-		if (!c->covered)
-		not_covered++;
-		E("\tNot covered %d sets\n", not_covered);
-		not_covered=0;*/
-	/*
-		foreach (fr, fatreads) {
-		char cv = 0;
-		foreach (t, fr->clusters)
-		cv |= clusters[t->first].covered;
-		if (!cv) {
-		not_covered++;
-		ncr += fr->reads.s();
-	//E("<<%d:\n",fr->clusters.size());
-	//foreach(cx, fr->clusters)
-	//	E("\t%d %d %.2lf\n", clusters[cx->first].covered, (*heap_handles[cx->first]).cardinality, (*heap_handles[cx->first]).weight);
-	}
-	}*/
-	//E("\t%'d non-covered fatreads (%'d reads)\n", not_covered, ncr);
-
 	return clusters.size();
 }
 
 void probabilistic_assign (void) {
+	// assign farteads to clusters
+	// based on cluster coverage
+	// higher coverage => more reads
 	foreach (fr, fatreads) {
 		int total = 0;
 		// count -> set
 		vector<pair<int,int> >  counts;
 		foreach (c, fr->clusters) 
 			if (clusters[c->first].covered) {
-				// count number of reads this set covers
 				int cnt = 0;
-				//foreach (pos, clusters[c->first].fatreads) 
-				//	foreach (fx, pos->second) // in fatreads
-				//		cnt += fatreads[*fx].reads.size();
 				cnt = clusters[c->first].coverage;
 				total += cnt;
 				counts.push_back(make_pair(cnt, c->first));
@@ -293,7 +231,6 @@ void probabilistic_assign (void) {
 
 		// lo count->hi count
 		sort(counts.begin(), counts.end());
-
 		int remain = fr->reads.size();
 		for (int i = 0; i < counts.size(); i++) {
 			int r = (counts[i].first * fr->reads.size()) / total;
@@ -314,7 +251,7 @@ typedef struct {
 #define MIN3(a,b,c)  (min(a,min(b,c)))
 
 /* component -- vector id cluster ids to be smoothed */
-int smooth (const vector<int> &component, int iter_limit = 5000) {
+int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5000) {
 	// TODO: This dares to be UGLY!
 	static vector<CLUSTER_STAT> levels;
 	if (!levels.size()) 
@@ -439,110 +376,62 @@ int smooth (const vector<int> &component, int iter_limit = 5000) {
 					}
 				}
 			}
-end:; // goto ftw!
+	end:; // goto ftw!
 		}
 	} while (alive);
-
-	foreach (c, component)
-	{
+	/*foreach (c, component) {
 		L("# %s\n", print_pt(clusters[*c].partial).c_str());
 		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt_[i]); L("\n");
 		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt [i]); L("\n");
-	}
-
-	//	L("Set sz %'d, iters %'d, ini %'d, red %'d\n", component.size(), iters, sum, red);
+	}*/
 }
 
-
-// DANGEROUS ZONE
-// I TAKE NO RESPONSIBILITY
-// FOR THE CODE BELOW
-// (in fact, i am not quite sure what it exactly does... kinda magic ...)
-//
-
-typedef struct { 
-	map<int, int> poscnt; // graph, X->Y for non-zeros (most of the time)
-	map<int, int> poscnt_; // graph, X->Y for non-zeros (most of the time)
-} PLOT_STAT;
-vector<PLOT_STAT> _levels;
-
-void cplex_api (const vector<int> &component, char *model_id) {
-	// if(!_levels.size()) _levels.resize( clusters.size() );
-	// foreach (c, component) {
-	// 	for (int i=0;i<clusters[*c].single.size();i++)
-	// 		_levels[*c].poscnt_[i]=clusters[*c].single[i];
-	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-	// 		int s = 0; 
-	// 		foreach (r, p->second) // r: fatread
-	// 			s += fatreads[*r].solution[*c];
-	// 		_levels[*c].poscnt_[p->first] += s;
-	// 	}
-	// }
-
-
-	// L("\t"); foreach(c, component)L("%s ", print_pt(&clusters[*c]).c_str());L("\n");
-	// refine the read sets ...
-	// [read] -> [[set] -> [var]]
-
+void cplex_api (const vector<int> &component, int id) {
 	IloEnv env;
 
+	// component -> (fatread)
+	map<pair<int, int>, IloIntVar> variables;
+	for (int i = 0; i < component.size(); i++)
+		foreach (fr_pos, clusters[component[i]].fatreads)
+			foreach (fr, fr_pos->second) {
+				if (variables.find(make_pair(component[i], *fr)) == variables.end())
+					variables[make_pair(component[i], *fr)] = IloIntVar(env);
+			}
 
-	static vector<map<int, IloIntVar> > read_var;
-	read_var.resize(fatreads.size());
-	for (int i = 0; i < fatreads.size(); i++) {
-		foreach (s, fatreads[i].clusters)  {
-			read_var[i][s->first] = IloIntVar(env);
-		}
-	}
+	char model_id[500];
+	sprintf(model_id, "orman%06d.lp", id);
 
-	//E("Set size %d\n", component.size());
-	//fflush(stdout);
 	IloModel model(env, model_id);
 
-	// Objective: MINIMIZE SUM(D_transcript)
+	// Constraint
 	IloNumVarArray d(env, component.size(), 0, IloInfinity);
-	d.setNames("D");
 	model.add(IloMinimize(env, IloSum(d)));
-
-	int rc = 0;
-	foreach (c, component) {
-		foreach (p, clusters[*c].fatreads)
-			rc += p->second.size();
-	}
-	L("Here %d fatreads\n", rc);
-
-	// Bounds: D_transcript
+	// -D <= AV - NR <= D
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
 
-		//IloExprArray nr(env);
 		vector<IloExpr> nr;
-		// get NR
 		IloExpr nrsum(env);
 		foreach (pos, clusters[c].fatreads) { 
 			nr.push_back(IloExpr(env));
 			nr.back() += (double)clusters[c].single[pos->first];
-			foreach (r, pos->second) {
-				nr.back() += read_var[*r][c]; 
-			}
+			foreach (r, pos->second)
+				nr.back() += variables[c][*r];
 			nrsum += nr.back();
 		}
 
 		for (int i = 0; i < clusters[c].single.size(); i++)
-			if (clusters[c].fatreads.find(i) == clusters[c].fatreads.end()) {
+			if (clusters[c].fatreads.find(i) == clusters[c].fatreads.end()) 
 				nrsum += (double)clusters[c].single[i];
-			}
 		nrsum /= (double)partial_length(clusters[c].partial);
 		foreachidx (pos, posi, clusters[c].fatreads) {
 			model.add(nrsum + d[ci] - nr[posi] >= 0);
 			model.add(nrsum - d[ci] - nr[posi] <= 0);
 		}
 		nrsum.end();
-		foreach (n, nr)
-			n->end();
+		foreach (n, nr) n->end();
 	}
-
-	// Constraint: SUM(Rij) = |R|
+	// SUM(Rij) = sizeof(R)
 	set<int> component_fatreads;
 	foreach (c, component) 
 		foreach (pos, clusters[*c].fatreads) 
@@ -557,39 +446,24 @@ void cplex_api (const vector<int> &component, char *model_id) {
 	}
 	component_fatreads.clear();
 
-	//E("Starting CPLEX ...\n");
 	try {
 		IloCplex cplex(model);
-		cplex.setParam(IloCplex::Threads, 2);
+		cplex.setParam(IloCplex::Threads, 1);
 		cplex.setParam(IloCplex::TiLim, 120);
 //		cplex.setParam(IloCplex::TreLim, 8162);
 //		cplex.setParam(IloCplex::WorkMem, 8162);
 		cplex.exportModel((string("models/") + model_id).c_str());
 		cplex.setOut(env.getNullStream());
-		bool ok = 0;
-
+		
 		cplex.solve();
-		L("\tSet size %d, cplex status: %d, opt. value %.3lf\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue());
-		ok = 1;
-
-		if (ok) for (int r = 0; r < read_var.size(); r++) { 
-			int sol = 0;
-			bool solved = false;
-			foreach (s, read_var[r]) if (find(component.begin(), component.end(), s->first) != component.end()) {
-				solved = true;
-				int res = IloRound(cplex.getValue(s->second));
-				fatreads[r].solution[s->first] = res;
-				sol += res;
-			}
-
-			/*if(solved && sol != fatreads[r].reads.size()) {
-				E("sol %d fr %d\n", sol , fatreads[r].reads.size());
-				abort();
-			}*/
+		// L("\tSet size %d, cplex status: %d, opt. value %.3lf\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue());
+		
+		// update solution
+		foreach (var, variables) {
+			int res = IloRound(cplex.getValue(var->second));
+			fatreads[var->first.second].solution[var->first.first] = res;
 		}
-
-		L("\tCPLEX %'.2lfM --> ", env.getTotalMemoryUsage()/(1024*1024.0));
-
+		// clean
 		cplex.clearModel();
 		cplex.end();
 		d.endElements();
@@ -604,41 +478,49 @@ void cplex_api (const vector<int> &component, char *model_id) {
 	catch (IloException &ex) {
 		L("\tException! %s\n", ex.getMessage());
 		ex.end();
-		smooth(component);
+		heuristics_smooth(component, id);
 	}
-
-
-	// foreach (c, component) {
-	// 	for (int i=0;i<clusters[*c].single.size();i++)
-	// 		_levels[*c].poscnt[i]=clusters[*c].single[i];
-	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-	// 		int s = 0; 
-	// 		foreach (r, p->second) // r: fatread
-	// 			s += fatreads[*r].solution[*c];
-	// 		_levels[*c].poscnt[p->first] += s;
-	// 	}
-	// }
-	// foreach (c, component) {
-	// 	PTsp pt1 = clusters[*c].partial.first;
-	// 	L("# %s:%d:%d_", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight);
-	// 	pt1 = clusters[*c].partial.second;
-	// 	if (pt1) L("%s:%d:%d \n", string(pt1->transcript->gene->name + ":" + pt1->signature).c_str(), pt1->length, pt1->weight); else L("\n");
-	// 	foreach (x, _levels[*c].poscnt_) L("(%d,%d) ", x->first,x->second); L("\n");
-	// 	foreach (x, _levels[*c].poscnt)  L("(%d,%d) ", x->first,x->second); L("\n");
-	// }
-
-
-	L("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
-	E("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
-
+	// E("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
 	env.end();
 }
 
+static pthread_t *threads;
+static pthread_mutex_t mtx_access;
+static int thread_counter = 0;
+static vector<vector<int> > components;
+static vector<int> ids; 
 
+void *thread (void *arg) {
+	while (1) {
+		bool survive = true;
+		pthread_mutex_lock(&mtx_io);
+			if (components.size () == 0) {
+				pthread_mutex_unlock(&mtx_io);
+				return;	
+			}
+			vector<int> c = components.back();
+			int id = ids.back();
+			components.pop_back();
+			ids.pop_back();
+		pthread_mutex_unlock(&mtx_io);
+
+		int rc = 0; 
+		foreach (c, component) {
+			foreach (p, clusters[*c].fatreads)
+				rc += p->second.size();
+		}
+
+		if (component.size () <= 1 || rc <= 2) 
+			return;
+
+		cplex_smooth(component, id);
+	//	heuristics_smooth(component, id, 1000);
+	}
+	return 0;
+}
 
 // DFS from cluster i; n_sets is component big-bang
 void connected_component_dfs (int i, vector<int> &n_sets, vector<char> &visited) {
-	// add this cluster to the component
 	n_sets.push_back(i);
 	visited[i] = 1;
 
@@ -650,45 +532,47 @@ void connected_component_dfs (int i, vector<int> &n_sets, vector<char> &visited)
 }
 
 void connected_components (void) {
-
 	vector<char> visited(clusters.size(), 0);
 	int cc_count = 0, // how many components?
-		 cc_sets = 0;  // how many sets covered by components?
+		 cc_sets = 0; // how many sets covered by components?
 
-	foreach (r, fatreads)
-		foreach (s, r->clusters)
+	foreach (r, fatreads) foreach (s, r->clusters)
 		if (!visited[s->first] && clusters[s->first].covered) {	
 			vector<int> component;
 			connected_component_dfs(s->first, component, visited);
 
-			// calculate number of fatreads in this component
-			int rc = 0; 
-			foreach (c, component) {
-				foreach (p, clusters[*c].fatreads)
-					rc += p->second.size();
-			}
-
-			// if (component.size() > 1)
-			L("\tComponent: %d transcripts, %d fatreads\n", component.size(), rc);
-			char c[200];
-			sprintf(c, "model_%d.lp", cc_count);
-		//	cplex_api(component, c);
-			smooth(component, 1000);
-
-			// done, whoa whoa whoa!
-		/*	if (component.size() < 2) 
-				;
-			//	else if (component.size() < 10)
-			//		cplex_api(env, component, c);
-			else
-				smooth(component);*/
-
-			// some stat update
-			cc_count++;
-			cc_sets += component.size();
+			components.push_back(component);
+			ids.push_back(cc_count++);
 		}		
 
-	E("\tCover count %'d [%'d]\n", cc_count, cc_sets);
+	E("\t%'d components (totaling %'d clusters)\n", cc_count, cc_sets);
+
+	// start threading!!
+	threads = new pthread_t[thread_count];
+	pthread_mutex_init(&mtx_access, 0);
+
+	int thread_count = 20;
+	E("\tStarting %d threads\n", thread_count);
+	for (int i = 0; i < thread_count; i++)
+		pthread_create(&threads[i], 0, thread, 0);
+	while (1) {
+		bool survive = true;
+		int size;
+		pthread_mutex_lock(&mtx_access);
+			if ((size = components.size()) == 0)
+				survive = false;
+		pthread_mutex_unlock(&mtx_access);
+		if (!survive) break;
+		
+		E("\r\t %'d of %'d completed", size, cc_count);
+		sleep(1);
+	}
+	E("\n");
+	for (int i = 0; i < thread_count; i++)
+		pthread_join(threads[i], 0);
+
+	pthread_mutex_destroy(&mtx_access);
+	delete[] threads;
 }
 
 void update_solution (vector<struct read> &reads) {
