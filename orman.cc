@@ -4,6 +4,15 @@
 #include "orman.h"
 #include <boost/heap/fibonacci_heap.hpp>
 #include <ilcplex/ilocplex.h>
+#include <inttypes.h>
+#include <getopt.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <sys/sysinfo.h>
+#include <sys/time.h>
+#include <pthread.h>
 
 using namespace std;
 using namespace boost::heap;
@@ -241,6 +250,8 @@ void probabilistic_assign (void) {
 	}
 }
 
+static pthread_mutex_t mtx_io;
+
 typedef struct { 
 	double avg; // average value
 	int maxpos; // maxpeak
@@ -257,7 +268,9 @@ int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5
 	if (!levels.size()) 
 		levels.resize(clusters.size());
 
-	L("\tHeuristics!\n");
+	pthread_mutex_lock(&mtx_io);
+	L("#Heuristics!\n");
+	pthread_mutex_unlock(&mtx_io);
 	// total sum of peaks; red is reduced by heuristics
 	int sum = 0, red = 0;
 	foreach (c, component) {
@@ -386,7 +399,7 @@ int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5
 	}*/
 }
 
-void cplex_api (const vector<int> &component, int id) {
+void cplex_smooth (const vector<int> &component, int id) {
 	IloEnv env;
 
 	// component -> (fatread)
@@ -394,8 +407,8 @@ void cplex_api (const vector<int> &component, int id) {
 	for (int i = 0; i < component.size(); i++)
 		foreach (fr_pos, clusters[component[i]].fatreads)
 			foreach (fr, fr_pos->second) {
-				if (variables.find(make_pair(component[i], *fr)) == variables.end())
-					variables[make_pair(component[i], *fr)] = IloIntVar(env);
+				if (variables.find(make_pair(*fr, component[i])) == variables.end())
+					variables[make_pair(*fr, component[i])] = IloIntVar(env);
 			}
 
 	char model_id[500];
@@ -411,40 +424,38 @@ void cplex_api (const vector<int> &component, int id) {
 		int c = component[ci];
 
 		vector<IloExpr> nr;
-		IloExpr nrsum(env);
+		IloExpr avg(env);
 		foreach (pos, clusters[c].fatreads) { 
 			nr.push_back(IloExpr(env));
 			nr.back() += (double)clusters[c].single[pos->first];
 			foreach (r, pos->second)
-				nr.back() += variables[c][*r];
-			nrsum += nr.back();
+				nr.back() += variables[make_pair(*r, c)];
+			avg += nr.back();
 		}
 
 		for (int i = 0; i < clusters[c].single.size(); i++)
 			if (clusters[c].fatreads.find(i) == clusters[c].fatreads.end()) 
-				nrsum += (double)clusters[c].single[i];
-		nrsum /= (double)partial_length(clusters[c].partial);
+				avg += (double)clusters[c].single[i];
+		avg /= (double)partial_length(clusters[c].partial);
 		foreachidx (pos, posi, clusters[c].fatreads) {
-			model.add(nrsum + d[ci] - nr[posi] >= 0);
-			model.add(nrsum - d[ci] - nr[posi] <= 0);
+			model.add(avg + d[ci] - nr[posi] >= 0);
+			model.add(avg - d[ci] - nr[posi] <= 0);
 		}
-		nrsum.end();
+		avg.end();
 		foreach (n, nr) n->end();
-	}
+	}	
 	// SUM(Rij) = sizeof(R)
-	set<int> component_fatreads;
-	foreach (c, component) 
-		foreach (pos, clusters[*c].fatreads) 
-			foreach (r, pos->second)
-				component_fatreads.insert(*r);
-	foreach (r, component_fatreads) { 
+	auto v = variables.begin();
+	while (v != variables.end()) {
 		IloExpr expr(env);
-		foreach (s, read_var[*r])
-			expr += s->second;
-		model.add(expr == fatreads[*r].reads.size());
+		int read = v->first.first;
+		while (v != variables.end() && v->first.first == read) {
+			expr += v->second; 
+			v++;
+		}
+		model.add(expr == fatreads[read].reads.size());
 		expr.end();
 	}
-	component_fatreads.clear();
 
 	try {
 		IloCplex cplex(model);
@@ -452,16 +463,20 @@ void cplex_api (const vector<int> &component, int id) {
 		cplex.setParam(IloCplex::TiLim, 120);
 //		cplex.setParam(IloCplex::TreLim, 8162);
 //		cplex.setParam(IloCplex::WorkMem, 8162);
-		cplex.exportModel((string("models/") + model_id).c_str());
 		cplex.setOut(env.getNullStream());
+		cplex.setWarning(env.getNullStream());
+//		cplex.exportModel((string("models/") + model_id).c_str());
 		
 		cplex.solve();
-		// L("\tSet size %d, cplex status: %d, opt. value %.3lf\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue());
 		
+		pthread_mutex_lock(&mtx_io);
+		L("#CPLEX Set size %d, cplex status: %d, opt. value %.3lf, memory %'.2lfM\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue(), env.getTotalMemoryUsage()/(1024*1024.0));
+		pthread_mutex_unlock(&mtx_io);
+
 		// update solution
 		foreach (var, variables) {
 			int res = IloRound(cplex.getValue(var->second));
-			fatreads[var->first.second].solution[var->first.first] = res;
+			fatreads[var->first.first].solution[var->first.second] = res;
 		}
 		// clean
 		cplex.clearModel();
@@ -476,11 +491,12 @@ void cplex_api (const vector<int> &component, int id) {
 		del.end();
 	}
 	catch (IloException &ex) {
-		L("\tException! %s\n", ex.getMessage());
+		pthread_mutex_lock(&mtx_io);
+		L("#CPLEX Exception! %s.%s --> ", ex.getMessage(), model_id);
+		pthread_mutex_unlock(&mtx_io);
 		ex.end();
 		heuristics_smooth(component, id);
 	}
-	// E("CPLEX %'.2lfM\n", env.getTotalMemoryUsage()/(1024*1024.0));
 	env.end();
 }
 
@@ -493,16 +509,16 @@ static vector<int> ids;
 void *thread (void *arg) {
 	while (1) {
 		bool survive = true;
-		pthread_mutex_lock(&mtx_io);
+		pthread_mutex_lock(&mtx_access);
 			if (components.size () == 0) {
-				pthread_mutex_unlock(&mtx_io);
-				return;	
+				pthread_mutex_unlock(&mtx_access);
+				return 0;	
 			}
-			vector<int> c = components.back();
+			vector<int> component = components.back();
 			int id = ids.back();
 			components.pop_back();
 			ids.pop_back();
-		pthread_mutex_unlock(&mtx_io);
+		pthread_mutex_unlock(&mtx_access);
 
 		int rc = 0; 
 		foreach (c, component) {
@@ -511,7 +527,7 @@ void *thread (void *arg) {
 		}
 
 		if (component.size () <= 1 || rc <= 2) 
-			return;
+			continue;
 
 		cplex_smooth(component, id);
 	//	heuristics_smooth(component, id, 1000);
@@ -543,15 +559,17 @@ void connected_components (void) {
 
 			components.push_back(component);
 			ids.push_back(cc_count++);
+			cc_sets += component.size();
 		}		
 
 	E("\t%'d components (totaling %'d clusters)\n", cc_count, cc_sets);
 
 	// start threading!!
+	int thread_count = min((int)sysconf(_SC_NPROCESSORS_ONLN) - 1, 20);
 	threads = new pthread_t[thread_count];
 	pthread_mutex_init(&mtx_access, 0);
+	pthread_mutex_init(&mtx_io, 0);
 
-	int thread_count = 20;
 	E("\tStarting %d threads\n", thread_count);
 	for (int i = 0; i < thread_count; i++)
 		pthread_create(&threads[i], 0, thread, 0);
@@ -564,14 +582,16 @@ void connected_components (void) {
 		pthread_mutex_unlock(&mtx_access);
 		if (!survive) break;
 		
-		E("\r\t %'d of %'d completed", size, cc_count);
+		E("\r\t %'d of %'d completed", cc_count-size, cc_count);
 		sleep(1);
 	}
+	E("\r\t %'d of %'d completed", cc_count-components.size(), cc_count);
 	E("\n");
 	for (int i = 0; i < thread_count; i++)
 		pthread_join(threads[i], 0);
 
 	pthread_mutex_destroy(&mtx_access);
+	pthread_mutex_destroy(&mtx_io);
 	delete[] threads;
 }
 
