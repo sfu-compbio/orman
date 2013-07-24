@@ -250,7 +250,19 @@ void probabilistic_assign (void) {
 	}
 }
 
+static pthread_t *threads;
+static pthread_mutex_t mtx_access;
 static pthread_mutex_t mtx_io;
+static int thread_counter = 0;
+static vector<vector<int> > components;
+static vector<int> ids; 
+class raii_lock { // thanks http://stackoverflow.com/questions/14272969/how-to-check-whether-pthread-mutex-t-is-locked-or-not
+    pthread_mutex_t &mutex;
+public:   
+    raii_lock(pthread_mutex_t &m): mutex(m) { pthread_mutex_lock(&mutex); }
+    ~raii_lock(void) { pthread_mutex_unlock(&mutex); }
+};
+
 
 typedef struct { 
 	double avg; // average value
@@ -260,16 +272,13 @@ typedef struct {
 	vector<int> poscnt_; // graph, X->Y for non-zeros (most of the time)
 } CLUSTER_STAT;
 #define MIN3(a,b,c)  (min(a,min(b,c)))
+vector<CLUSTER_STAT> levels;
 
 /* component -- vector id cluster ids to be smoothed */
 int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5000) {
-	// TODO: This dares to be UGLY!
-	static vector<CLUSTER_STAT> levels;
-	if (!levels.size()) 
-		levels.resize(clusters.size());
-
 	pthread_mutex_lock(&mtx_io);
 	L("#Heuristics!\n");
+	fflush(stdout);
 	pthread_mutex_unlock(&mtx_io);
 	// total sum of peaks; red is reduced by heuristics
 	int sum = 0, red = 0;
@@ -445,6 +454,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 		foreach (n, nr) n->end();
 	}	
 	// SUM(Rij) = sizeof(R)
+	int fr = 0;
 	auto v = variables.begin();
 	while (v != variables.end()) {
 		IloExpr expr(env);
@@ -453,8 +463,15 @@ void cplex_smooth (const vector<int> &component, int id) {
 			expr += v->second; 
 			v++;
 		}
+		fr++;
 		model.add(expr == fatreads[read].reads.size());
 		expr.end();
+	}
+
+	{
+		raii_lock _l(mtx_io);
+		L("Set size %'d, fatreads %'d\n", component.size(), fr);
+		fflush(stdout);
 	}
 
 	try {
@@ -469,9 +486,11 @@ void cplex_smooth (const vector<int> &component, int id) {
 		
 		cplex.solve();
 		
-		pthread_mutex_lock(&mtx_io);
-		L("#CPLEX Set size %d, cplex status: %d, opt. value %.3lf, memory %'.2lfM\n", component.size(), cplex.getCplexStatus(), cplex.getObjValue(), env.getTotalMemoryUsage()/(1024*1024.0));
-		pthread_mutex_unlock(&mtx_io);
+		{
+			raii_lock _l(mtx_io);
+			L("#CPLEX Status: %d; Optimum value: %.3lf; Memory: %'.2lfM; Instance: %s;\n", cplex.getCplexStatus(), cplex.getObjValue(), env.getTotalMemoryUsage()/(1024*1024.0), model_id);
+			fflush(stdout);
+		}
 
 		// update solution
 		foreach (var, variables) {
@@ -491,20 +510,18 @@ void cplex_smooth (const vector<int> &component, int id) {
 		del.end();
 	}
 	catch (IloException &ex) {
-		pthread_mutex_lock(&mtx_io);
-		L("#CPLEX Exception! %s.%s --> ", ex.getMessage(), model_id);
-		pthread_mutex_unlock(&mtx_io);
+		{
+			raii_lock _l(mtx_io);
+			string s = ex.getMessage();
+			s[s.size() - 1] = 0; // trim \n
+			L("#CPLEX Exception: %s; Instance: %s; ", s.c_str(), model_id);
+			fflush(stdout);
+		}
 		ex.end();
 		heuristics_smooth(component, id);
 	}
 	env.end();
 }
-
-static pthread_t *threads;
-static pthread_mutex_t mtx_access;
-static int thread_counter = 0;
-static vector<vector<int> > components;
-static vector<int> ids; 
 
 void *thread (void *arg) {
 	while (1) {
@@ -564,13 +581,14 @@ void connected_components (void) {
 
 	E("\t%'d components (totaling %'d clusters)\n", cc_count, cc_sets);
 
+	levels.resize(clusters.size());
+
 	// start threading!!
 	int thread_count = min((int)sysconf(_SC_NPROCESSORS_ONLN) - 1, 20);
 	threads = new pthread_t[thread_count];
 	pthread_mutex_init(&mtx_access, 0);
 	pthread_mutex_init(&mtx_io, 0);
 
-	E("\tStarting %d threads\n", thread_count);
 	for (int i = 0; i < thread_count; i++)
 		pthread_create(&threads[i], 0, thread, 0);
 	while (1) {
@@ -582,10 +600,10 @@ void connected_components (void) {
 		pthread_mutex_unlock(&mtx_access);
 		if (!survive) break;
 		
-		E("\r\t %'d of %'d completed", cc_count-size, cc_count);
+		E("\r\t(%d threads) %'d of %'d completed (%.2lf%%) ...", thread_count, cc_count-size, cc_count, 100.0*(cc_count-size)/double(cc_count));
 		sleep(1);
 	}
-	E("\r\t %'d of %'d completed", cc_count-components.size(), cc_count);
+	E("\r\t%'d of %'d completed (%.2lf%%)", cc_count-components.size(), cc_count, 100.0*(cc_count-components.size())/double(cc_count));
 	E("\n");
 	for (int i = 0; i < thread_count; i++)
 		pthread_join(threads[i], 0);
