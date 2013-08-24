@@ -96,7 +96,7 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 				exon_tree.insert(interval(t.exons[i].start, t.exons[i].end), &t.exons[i]);
 			}
 		}
-
+	chromosomes.insert(make_pair("*", chromosomes.size()));
 	fclose(fi);
 }
 

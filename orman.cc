@@ -45,12 +45,21 @@ vector<fatread> fatreads;
 string print_pt(const PT &p)  {
 	char c[500];
 	PTsp pt1 = p.first, pt2=p.second;
-	sprintf(c, "%s_%s", string(pt1->transcript->gene->name + "." + pt1->signature).c_str(), pt2?string(pt1->transcript->gene->name + "." + pt1->signature).c_str():"");
+	sprintf(c, "%s_%s", string(pt1->transcript->gene->name + "." + pt1->signature).c_str(), pt2?string(pt2->transcript->gene->name + "." + pt2->signature).c_str():"");
 	return string(c);
 }
 
-string print_pt(const cluster *p)  {
-	return print_pt(p->partial);
+string print_pt(const cluster &p)  {
+	return print_pt(p.partial);
+}
+
+static string S (const char* f, ...) {
+	char bf[MAX_BUFFER];
+	va_list args;
+	va_start(args, f);
+	vsprintf(bf, f, args);
+	va_end(args);
+	return string(bf);
 }
 
 /*****************************************************************************************/
@@ -71,10 +80,18 @@ int partial_weight (const PT &p) {
 void initialize_structures (vector<struct read> &reads) {
 	// assign clusters to partials
 	set<PT> partials;
+	set<string> zz;
 	foreach (ri, reads)
-		foreach (re, ri->entries) 
-		partials.insert(re->partial);
+		foreach (re, ri->entries) {
+			partials.insert(re->partial);
+			zz.insert(print_pt(re->partial));
+		}
 	clusters.resize(partials.size());
+	E("%d,%d\n", zz.size(), partials.size());
+	assert(zz.size()==partials.size());
+
+
+
 	int id = 0;
 	map<PT, int> cluster_index;
 	foreach (ci, partials) {
@@ -427,30 +444,100 @@ void cplex_smooth (const vector<int> &component, int id) {
 
 	// Constraint
 	IloNumVarArray d(env, component.size(), 0, IloInfinity);
-	model.add(IloMinimize(env, IloSum(d)));
+	IloExpr objective(env);
+	for (int ci = 0; ci < component.size(); ci++) {\
+		int c = component[ci];
+		
+		double avg = 0; int sz = 0;
+		for (int x = 0; x < clusters[c].single.size(); x++)
+			if (clusters[c].fatreads.find(x) == clusters[c].fatreads.end()) 
+			{
+				sz++;
+				avg += clusters[c].single[x];
+			}
+		avg /= sz;
+
+		objective += d[ci]; // / avg;
+	}
+	model.add(IloMinimize(env, objective));
+
 	// -D <= AV - NR <= D
+	string debug;
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
 
+		debug += print_pt(clusters[c]);	
+
 		vector<IloExpr> nr;
-		IloExpr avg(env);
 		foreach (pos, clusters[c].fatreads) { 
 			nr.push_back(IloExpr(env));
 			nr.back() += (double)clusters[c].single[pos->first];
 			foreach (r, pos->second)
 				nr.back() += variables[make_pair(*r, c)];
-			avg += nr.back();
 		}
 
-		for (int i = 0; i < clusters[c].single.size(); i++)
-			if (clusters[c].fatreads.find(i) == clusters[c].fatreads.end()) 
-				avg += (double)clusters[c].single[i];
-		avg /= (double)partial_length(clusters[c].partial);
-		foreachidx (pos, posi, clusters[c].fatreads) {
-			model.add(avg + d[ci] - nr[posi] >= 0);
-			model.add(avg - d[ci] - nr[posi] <= 0);
+		map<int, double> avg;
+		int	start_part,
+			end_part;
+		int prev_pos = -1;
+
+		auto pos = clusters[c].fatreads.begin();
+		while (1) { 
+			if (pos == clusters[c].fatreads.begin()) {
+				start_part = pos->first;
+			}
+			else if (pos == clusters[c].fatreads.end() || pos->first != prev_pos + 1) {
+				end_part = prev_pos;
+
+				/////
+
+				double start_part_boundary, end_part_boundary;
+
+				start_part_boundary = 0;
+				for (int j = start_part - 1; j >= 0 
+						&& j >= start_part - 1 - 100 
+						&& clusters[c].fatreads.find(j) == clusters[c].fatreads.end(); j--)
+					start_part_boundary += clusters[c].single[j];
+				start_part_boundary /= 100.0;
+
+				end_part_boundary = 0;
+				for (int j = end_part + 1; j < clusters[c].single.size() 
+						&& j <= end_part + 1 + 100 
+						&& clusters[c].fatreads.find(j) == clusters[c].fatreads.end(); j++)
+					end_part_boundary += clusters[c].single[j];
+				end_part_boundary /= 100.0;
+
+
+				// start_part_boundary = start_part - 1 >= 0 ? clusters[c].single[start_part - 1] : 0;
+				// end_part_boundary = end_part + 1 < clusters[c].single.size() ? clusters[c].single[end_part + 1] : 0;
+
+				for (int j = start_part; j <= end_part; j++)
+					avg[j] = start_part_boundary + (end_part_boundary - start_part_boundary) / (end_part - start_part + 1);
+
+				/////
+
+				debug += S("\t[%d;%d;st=%.2lf;ed=%'.2lf]", start_part, end_part, start_part_boundary, end_part_boundary);
+				
+				if (pos != clusters[c].fatreads.end())
+					start_part = pos->first;
+			}
+
+			prev_pos = pos->first;
+
+			if (pos == clusters[c].fatreads.end()) break;
+			else pos++;			
 		}
-		avg.end();
+		debug += "\n";
+
+		foreachidx (pos, posi, clusters[c].fatreads) {
+			if (avg.find(pos->first) == avg.end()) {
+				E("-----> %d %d %d\n", pos->first, avg.size()==0?-1:avg.rbegin()->first, clusters[c].fatreads.size());
+				abort();
+			}
+			assert(avg.find(pos->first) != avg.end());
+			model.add(avg[pos->first] + d[ci] - nr[posi] >= 0);
+			model.add(avg[pos->first] - d[ci] - nr[posi] <= 0);
+		}
 		foreach (n, nr) n->end();
 	}	
 	// SUM(Rij) = sizeof(R)
@@ -471,6 +558,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 	{
 		raii_lock _l(mtx_io);
 		L("Set size %'d, fatreads %'d\n", component.size(), fr);
+		L("%s", debug.c_str());
 		fflush(stdout);
 	}
 
@@ -478,11 +566,11 @@ void cplex_smooth (const vector<int> &component, int id) {
 		IloCplex cplex(model);
 		cplex.setParam(IloCplex::Threads, 1);
 		cplex.setParam(IloCplex::TiLim, 120);
-//		cplex.setParam(IloCplex::TreLim, 8162);
-//		cplex.setParam(IloCplex::WorkMem, 8162);
+	//	cplex.setParam(IloCplex::TreLim, 8162);
+	//	cplex.setParam(IloCplex::WorkMem, 8162);
 		cplex.setOut(env.getNullStream());
 		cplex.setWarning(env.getNullStream());
-//		cplex.exportModel((string("models/") + model_id).c_str());
+	//	cplex.exportModel((string("models/") + model_id).c_str());
 		
 		cplex.solve();
 		
@@ -498,6 +586,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 			fatreads[var->first.first].solution[var->first.second] = res;
 		}
 		// clean
+		objective.end();
 		cplex.clearModel();
 		cplex.end();
 		d.endElements();
@@ -650,6 +739,30 @@ void update_solution (vector<struct read> &reads) {
 	//	fclose(fo);
 }
 
+
+
+string print_stats () {
+	string s;
+	for (int i = 0; i < clusters.size(); i++) {
+		s += "#" + print_pt(clusters[i]) + "\n";
+		for (int j = 0; j < clusters[i].single.size(); j++) {
+			int x = clusters[i].single[j];
+			int ex, nx;
+			if (clusters[i].fatreads.find(j) == clusters[i].fatreads.end())
+				ex = x, nx = x;
+			else {
+				ex = x, nx = x;
+				foreach (fr, clusters[i].fatreads[j]) { 
+					ex += fatreads[*fr].reads.size();
+					nx += fatreads[*fr].solution[i];
+				}
+			}
+			s += S("%d %d %d %d\n", j, x, ex, nx);
+		}
+	}
+	return s;
+}
+
 void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read_length) {
 	E("Initializing ORMAN; read length is %d ...\n", read_length);
 	initialize_structures(reads);
@@ -670,5 +783,10 @@ void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read
 	E("Updating solution ... \n");
 	update_solution(reads);
 	E("done in %d seconds!\n", zaman_last());
+
+	string s = print_stats();
+	FILE *fx = fopen("graph.dat", "w");
+	fwrite(s.c_str(), 1, s.size(), fx);
+	fclose(fx);
 }
 
