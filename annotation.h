@@ -19,7 +19,8 @@ public:
 
 		exon (void) {}
 		exon (uint32_t s, uint32_t e, const string &i) :
-			start(s), end(e), sid(i) {}
+			start(s), end(e), sid(i) {
+		}
 		bool operator< (const exon &e) const {
 			return start < e.start;
 		}
@@ -38,6 +39,18 @@ public:
 
 		int chromosome (void) const {
 			return gene->chromosome;
+		}
+
+		int position (int k) const {
+			// end exclusive
+			for (int i = 0; i < exons.size(); i++) {
+				if (k <= exons[i].end - exons[i].start)
+					return exons[i].start + k;
+				else 
+					k -= exons[i].end - exons[i].start;
+			}
+			//E("cannot find...... %d\n", k);
+			assert(0);
 		}
 	};
 	struct gene {
