@@ -3,7 +3,6 @@
 #include "common.h"
 #include "annotation.h"
 #include "interval.h"
-#include "rescue.h"
 #include "partial.h"
 #include "orman.h"
 #include <tuple>
@@ -55,19 +54,54 @@ set<PTs> PTs_set;
 vector<struct read> reads;
 genome_annotation ga;
 
-vector< vector<short> > covx;
+unsigned short * covx;
+char *multiregion;
+uint32_t genome_len;
 
-int get_single_coverage(const PT &p, int k) {
-	return covx[p.first->transcript->chromosome()]
-			   [p.first->transcript->position(k)];
+ uint32_t get_absolute_position (const PT &p, int k) {
+	return 
+		ga.get_chromosome_offset(p.first->transcript->chromosome()) +  // chr
+		p.first->transcript->position(p.first->start, k); // position in exon ...
+}
+
+ uint32_t get_gene_position (const PT &p, int k) {
+	uint32_t e = k;
+	for (int i = 0; i < p.first->start; i++)
+		e += p.first->transcript->exons[i].end - p.first->transcript->exons[i].start + 1;
+	if(e >= p.first->transcript->length()) {
+		E("!!! %d %d %d\n", e, k, p.first->transcript->length());
+	}
+	return e;
+}
+
+ uint32_t g2G (genome_annotation::transcript *t, uint32_t k) {
+ 	if (k >= t->length()) {
+ 		E("%u %u\n", k, t->length());
+ 		abort();
+ 	}
+
+	return ga.get_chromosome_offset(t->chromosome()) + 
+		   t->position(0, k);
+}
+
+ int get_single_coverage(const PT &p, int k) {
+	return covx[get_absolute_position(p, k)];
+}
+
+ int get_single_coverage(uint32_t j) {
+	return covx[j];
+}
+
+ char is_multimap (uint32_t j) {
+	return multiregion[j];
 }
 
 void increase_coverage(int chr, int p1, int p2) {
-	assert(chr < covx.size());
 	assert(p1 <= p2);
-	assert(p2 < covx[chr].size());
-	for (int i = p1; i < p2; i++)
-		covx[chr][i]++;	
+	uint32_t x = ga.get_chromosome_offset(chr);
+	assert(x + p2 < genome_len + 1);
+	for (int i = p1; i < p2; i++) 
+		covx[x + i]++;	
 }
 
 /*******************************************************************************/
@@ -83,7 +117,7 @@ bool parse_cigar (uint32_t start_pos, const char *cigar, const char *read, vecto
 			num = 10 * num + (*cigar - '0');
 		else {
 			if (*cigar == 'M') {
-				result.push_back(interval(start_pos, start_pos + num));
+				result.push_back(interval(start_pos, start_pos + num - 1)); // inclusive!!!
 				start_pos += num;
 				read += num;
 			}
@@ -202,11 +236,11 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 			signature += "[";
 			if (indels[indel_idx].type == indel::indel_type::INSERT) { // reference insert
 				signature += "I." + indels[indel_idx].insert;
-				length += indels[indel_idx].second - indels[indel_idx].first + 1;
+			//	length += indels[indel_idx].second - indels[indel_idx].first + 1;
 			}
 			else { // reference delete
 				signature += "D";
-				length += indels[indel_idx].second - indels[indel_idx].first + 1;
+			//	length += indels[indel_idx].second - indels[indel_idx].first + 1;
 			}
 			signature += "," + numtostr(indels[indel_idx].first - e->start) // start
 						  + "," + numtostr(indels[indel_idx].second - indels[indel_idx].first) // length
@@ -217,7 +251,7 @@ PTsp get_partial_transcript (transcript *t, const vector<exon*> &exons, const ve
 		}
 	}
 
-	PTs pt(t, signature, length, weight);
+	PTs pt(t, signature, length, weight, exons[0]->id);
 	auto pti = PTs_set.insert(pt);
 	return &(* pti.first);
 }
@@ -310,24 +344,24 @@ void parse_read (const read_entry_key &rk, const read_entry_value &rv, set<read_
 	makecand(rv.part2, rk.chr2, candidates2);
 
 	//// crappy coverage
-	// #ifdef LOGIFY
-	// LOG("%s ", _sline1.c_str());
-	// foreach (ci1, candidates1) {
-	// 	int starting_position1 = 0; 
-	// 	PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, parts1, indels1, starting_position1);
-	// 	if (pt1) LOG("%s ", string(pt1->transcript->gene->name /*+ "." + pt1->transcript->name */+ ":" + pt1->signature).c_str());
-	// 	else LOG("%s ", get_partial_transcript_error.c_str());
-	// }
-	// LOG("\n");
-	// LOG("%s ", _sline2.c_str());
-	// foreach (ci2, candidates2) {
-	// 	int starting_position2 = 0; 
-	// 	PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, parts2, indels2, starting_position2);
-	// 	if (pt2) LOG("%s ", string(pt2->transcript->gene->name + /*"." + pt2->transcript->name + */":" + pt2->signature).c_str());
-	// 	else LOG("%s ", get_partial_transcript_error.c_str());
-	// }
-	// LOG("\n");
-	// #endif
+	#ifdef LOGIFY
+	LOG("%s ", _sline1.c_str());
+	foreach (ci1, candidates1) {
+		int starting_position1 = 0; 
+		PTsp pt1 = get_partial_transcript(ci1->first, ci1->second, rv.part1, rv.indel1, starting_position1);
+		if (pt1) LOG("%s ", string(pt1->transcript->gene->name + "." + pt1->signature).c_str());
+		else LOG("%s ", get_partial_transcript_error.c_str());
+	}
+	LOG("\n");
+	LOG("%s ", _sline2.c_str());
+	foreach (ci2, candidates2) {
+		int starting_position2 = 0; 
+		PTsp pt2 = get_partial_transcript(ci2->first, ci2->second, rv.part2, rv.indel2, starting_position2);
+		if (pt2) LOG("%s ", string(pt2->transcript->gene->name + "_" + pt2->signature).c_str());
+		else LOG("%s ", get_partial_transcript_error.c_str());
+	}
+	LOG("\n");
+	#endif
 
 	bool crappy = true;
 	foreach (ci1, candidates1) {
@@ -383,18 +417,25 @@ void parse_sam (const char *sam_file) {
 				if (strlen(buffer) > 3 && buffer[1] == 'S' && buffer[2] == 'Q') {
 					sscanf(buffer, "%s %s %s", sam_name, sam_rname, sam_cigar);
 					int chr = ga.get_chromosome(string(sam_rname + 3));
-					int len = atoi(sam_cigar + 3);
-					if (chr > covx.size()) covx.resize(chr + 10);
-					covx[chr].resize(len, 0);
-					E("\tChromosome %2s [%02d] of size %'12d\n", sam_rname+3, chr, len);
+					ga.set_chromosome_offset(chr, genome_len);
+					genome_len += atoi(sam_cigar + 3);
 				}
 				continue;
 			}
 			else if (prev_name == "") {
+				covx = new unsigned short[genome_len + 1];
+				memset(covx, 0, sizeof(unsigned short) * (genome_len + 1));
+
+				multiregion = new char[genome_len + 1];
+				memset(multiregion, 0, (genome_len + 1));
+
 				E("\t%5s %15s %15s %15s\n", "%%", "Partials", "Reads", "SAM lines");
 			}
 			sscanf(buffer, "%s %u %s %u %u %s %s %d %d %s", 
 				sam_name, &sam_flag, sam_rname, &sam_pos, &sam_mapq, sam_cigar, sam_rnext, &sam_pnext, &sam_tlen, sam_read);
+			// make it 0-based
+			sam_pos--;
+			sam_pnext--;
 		}
 
 		// E(">%d\n",line);
@@ -415,22 +456,28 @@ void parse_sam (const char *sam_file) {
 			if (result.size() > 1) { 
 				if (read_id >= reads.size())
 					reads.resize(read_id + 10000);
-				foreach (i, result) 
+				foreach (i, result) {
 					reads[read_id].entries.push_back(read::read_entry(
 						PT(i->partial1, i->partial2),
 						make_pair(i->line1, i->line2),
 						make_pair(i->start1, i->start2)
 					));
+
+					foreach (x, i->part1) 
+				 		for (uint32_t _q=x->first;_q<= x->second;_q++)	multiregion[ga.get_chromosome_offset(i->chr1)+_q]=1;
+				 	foreach (x, i->part2) 
+				 		for (uint32_t _q=x->first;_q<= x->second;_q++)	multiregion[ga.get_chromosome_offset(i->chr2)+_q]=1;
+				}
 				read_id++;
 			}
 			// otherwise, just update the single-mapping partial counter
 			else if (result.size() == 1) {
-				// coverage!
+				//  ENSG00000135535.e6
 				foreach (x, result.begin()->part1) 
 				 	increase_coverage(result.begin()->chr1, x->first, x->second);
 				foreach (x, result.begin()->part2) 
 				 	increase_coverage(result.begin()->chr2, x->first, x->second);
-			
+
 				if (result.begin()->line1 != -1)
 					single_maps.push_back(make_pair(result.begin()->line1, 
 							result.begin()->partial1->get_gene()));
@@ -671,6 +718,43 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam, char 
 	strncpy(newsam, argv[optind], MAX_BUFFER);
 }
 
+/*
+static string print_stats () {
+	string s;
+
+	s += "set terminal pngcairo size 1000,200 enhanced font 'Arial,9'\n";
+	s += "set style fill transparent solid 0.75 noborder\n";
+
+	FILE *fy = fopen("plots/script.gnuplot", "w");
+
+	set<string> dx;
+
+	foreach (g, ga.genes) foreach (t, g->second.transcripts) foreach (e, t->second.exons) {
+		string name = "X_" + g->second.name + ":" + t->second.name + "." + e->sid;
+		if (dx.find(name)==dx.end())dx.insert(name);
+		else {
+			E("oooops\n");
+			abort();
+		}
+
+		s += S("set output 'plots/%s.png'\n", name.c_str());
+		s += S("set title '%s'\n", name.c_str());
+
+		string path = S("plots/%s.g", name.c_str());
+		FILE *fx = fopen(path.c_str(), "w");
+		for (int j = 0; j < e->end - e->start; j++) 
+			fprintf(fx, "%d %d\n", j, covx[ga.get_chromosome_offset(g->second.chromosome) + e->start + j]);
+		fclose(fx);
+		s += S("plot '%s' using 1:3 title 'before orman' with filledcurves x1\n", path.c_str());
+		fwrite(s.c_str(), 1, s.size(), fy);
+		s = "";
+	}
+
+	fclose(fy);
+
+	return "";
+}*/
+
 int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
 	char buffer[MAX_BUFFER];
@@ -694,7 +778,6 @@ int main (int argc, char **argv) {
 
 	zaman_last();
 
-
 	E("Parsing GTF file %s ...\n", realpath(gtf, buffer));
 	ga.parse_gtf(gtf);
 	E("done in %d seconds!\n", zaman_last());
@@ -703,9 +786,10 @@ int main (int argc, char **argv) {
 	parse_sam(sam);
 	E("done in %d seconds!\n", zaman_last());
 
-//	foreach (pt1, PTs_set)
-//		L("%s\n", string(pt1->transcript->gene->name /*+ "." + pt1->transcript->name*/ + pt1->signature).c_str());	
-//	L("======\n");
+	// E("Plotting ... \n");
+	// string s = print_stats();
+	// E("done in %d seconds!\n", zaman_last());
+	// return 0;
 
 //	foreach (p, PT_single_count) {
 //		PTsp pt1 = p->first.first;

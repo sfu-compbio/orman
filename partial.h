@@ -14,10 +14,11 @@ struct PT_single {
 	string signature;
 	int length;
 	int weight;
+	uint32_t start;
 
 	PT_single (void) {}
-	PT_single (genome_annotation::transcript *t, const string &s, int l, int w) : 
-		transcript(t), signature(s), length(l), weight(w) {}
+	PT_single (genome_annotation::transcript *t, const string &s, int l, int w, uint32_t st) : 
+		transcript(t), signature(s), length(l), weight(w), start(st) {}
 
 	bool operator== (const PT_single &s) const {
 		return (transcript == s.transcript && signature == s.signature);
@@ -43,8 +44,12 @@ struct PT {
 	bool operator< (const PT &x) const { return first<x.first || (first==x.first && second<x.second); }
 };
 //ypedef pair<PTsp, PTsp> 	PT;  
-int get_single_coverage(const PT &p);
-int get_single_coverage(const PT &p, int k);
+ uint32_t get_absolute_position (const PT &p, int k);
+ uint32_t get_gene_position (const PT &p, int k);
+ uint32_t g2G ( genome_annotation::transcript *t, uint32_t k) ;
+ int get_single_coverage(const PT &p, int k);
+ int get_single_coverage(uint32_t j);
+ char is_multimap (uint32_t j);
 
 struct read {
 	struct read_entry {

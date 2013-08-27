@@ -426,8 +426,13 @@ vector< vector<double> > avg__;
 string print_stats () {
 	string s;
 
-	s += "set terminal pngcairo size 1000,200 enhanced font 'Arial,9'\n";
-	s += "set style fill transparent solid 0.75 noborder\n";
+	s += 	"set terminal pngcairo size 1000,500 enhanced font 'Arial,9'\n"
+			"set style fill transparent solid 0.75 noborder\n"
+			"set style line 1 linecolor rgb 'black' linetype 1 linewidth 2\n"
+			"set yrange [0:4000]\n";
+	//  set ytics (105, 100, 95, 90, 85, 80)
+
+
 
 	for (int i = 0; i < clusters.size(); i++) {
 		string name = print_pt(clusters[i]);
@@ -458,13 +463,12 @@ string print_stats () {
 		s += S(	"plot '%s' using 1:3 title 'before orman' with filledcurves x1, "
 				"'' using 1:4 title 'after orman' with filledcurves x1, "
 				"'' using 1:2 title 'single coverage' with filledcurves x1, "
-				"'' using 1:5 title 'average points' with lines\n", path.c_str());
+				"'' using 1:5 title 'average points' with lines linestyle 1\n", path.c_str());
 	}
 	return s;
 }
 
 void cplex_smooth (const vector<int> &component, int id) {
-
 	avg__.resize(clusters.size());
 	for(int i=0;i<clusters.size();i++)
 		avg__[i].resize(clusters[i].single.size(),0);
@@ -488,7 +492,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 	// Constraint
 	IloNumVarArray d(env, component.size(), 0, IloInfinity);
 	IloExpr objective(env);
-	for (int ci = 0; ci < component.size(); ci++) {\
+	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
 		
 	/*	double avg = 0; int sz = 0;
@@ -533,28 +537,50 @@ void cplex_smooth (const vector<int> &component, int id) {
 			pos->second += (double)clusters[c].single[pos->first];
 
 		map<int, double> avg;
-		int	start_part = -1,
-			end_part;
+		int	start_part = 0;
 		//int prev_pos = -1;
 		for (int i = 0; i < clusters[c].single.size(); i++) {
 			if (nr.find(i) != nr.end()) {
 				while (i < clusters[c].single.size() && nr.find(i) != nr.end())
 					i++;
 
-				// start_part, i
+				L("%s\t", print_pt(clusters[c].partial).c_str());
+
+				int offset = 0;
+				int32_t sp, ep;
+				//assert(start_part!=-1);
+				sp = get_gene_position(clusters[c].partial, start_part), 
+				ep = get_gene_position(clusters[c].partial, i-1);
+				L("Region %d..%d (%d..%d) (%'u..%'u)\t", start_part, i, sp, ep, g2G(clusters[c].partial.first->transcript, sp), g2G(clusters[c].partial.first->transcript, ep));
+				
+				L("%d%d   ",is_multimap(g2G(clusters[c].partial.first->transcript, sp)),is_multimap(g2G(clusters[c].partial.first->transcript, ep)));
+				if(print_pt(clusters[c].partial)=="ENSG00000135535.e7e8_")
+					for(unsigned int q=2372891821u;q<2372892226u;q++)
+						L("%d",is_multimap(q)); L("    ");
+
+				while (sp >= 0 && is_multimap(g2G(clusters[c].partial.first->transcript, sp))) sp--, offset++;
+				while (ep < clusters[c].partial.first->transcript->length() && 
+					is_multimap(g2G(clusters[c].partial.first->transcript, ep))) ep++;
+
+				L("Enl to %d..%d\t", sp, ep);
+
+				int neighbourhood = 1.5 * read_length, steps;
+
 				double start_part_boundary = 0;
-				for (int j = start_part - 1; j >= 0 
-						&& j >= start_part - 1 - 100 
-						&& nr.find(j) == nr.end(); j--)
-					start_part_boundary += clusters[c].single[j];
-				start_part_boundary /= 100.0;
+				steps = 1;
+				if(sp) for (int32_t j = sp; j >= 0 
+						&& j >= sp - neighbourhood
+						&& !is_multimap(g2G(clusters[c].partial.first->transcript, j)); j--)
+					start_part_boundary += get_single_coverage(g2G(clusters[c].partial.first->transcript, j)), steps++;
+				start_part_boundary /= steps;
 
 				double end_part_boundary = 0;
-				for (int j = end_part + 1; j < clusters[c].single.size() 
-						&& j <= i + 100 
-						&& nr.find(j) == nr.end(); j++)
-					end_part_boundary += clusters[c].single[j];
-				end_part_boundary /= 100.0;
+				steps = 1;
+				for (uint32_t j = ep; j < clusters[c].partial.first->transcript->length() &&
+						j < ep + neighbourhood 
+						&& !is_multimap(g2G(clusters[c].partial.first->transcript, j)); j++)
+					end_part_boundary += get_single_coverage(g2G(clusters[c].partial.first->transcript, j)), steps++;
+				end_part_boundary /= steps;
 
 				//E("part %d,%d of %d\n",start_part,i,clusters[c].single.size());
 				if (fabs(start_part_boundary) < 1e-6)
@@ -562,63 +588,20 @@ void cplex_smooth (const vector<int> &component, int id) {
 				if (fabs(end_part_boundary) < 1e-6)
 					end_part_boundary = start_part_boundary;
 
-				for (int j = start_part + 1; j < i; j++)
+				L("%s st %.2lf %d ed %.2lf %d [%d %d]\n", print_pt(clusters[c].partial).c_str(), start_part_boundary, end_part_boundary, start_part, i, sp, ep);
+
+				for (int j = start_part; j < i; j++) {
 					avg[j] = start_part_boundary + 
-						(end_part_boundary - start_part_boundary) / (i - start_part - 1);
+						((end_part_boundary - start_part_boundary) / (ep - sp + 1)) * (offset + j - start_part - 1);
+					if (avg[j] < clusters[c].single[j])
+						avg[j] = clusters[c].single[j];
+				}
 			}
 			start_part = i;
 		}
 
 		foreach(pos,avg)
 			avg__[c][pos->first]=pos->second;
-
-		/*auto pos = clusters[c].fatreads.begin();
-		while (1) { 
-			if (pos == clusters[c].fatreads.begin()) {
-				start_part = pos->first;
-			}
-			else if (pos == clusters[c].fatreads.end() || pos->first != prev_pos + 1) {
-				end_part = prev_pos;
-
-				/////
-
-				double start_part_boundary, end_part_boundary;
-
-				start_part_boundary = 0;
-				for (int j = start_part - 1; j >= 0 
-						&& j >= start_part - 1 - 100 
-						&& clusters[c].fatreads.find(j) == clusters[c].fatreads.end(); j--)
-					start_part_boundary += clusters[c].single[j];
-				start_part_boundary /= 100.0;
-
-				end_part_boundary = 0;
-				for (int j = end_part + 1; j < clusters[c].single.size() 
-						&& j <= end_part + 1 + 100 
-						&& clusters[c].fatreads.find(j) == clusters[c].fatreads.end(); j++)
-					end_part_boundary += clusters[c].single[j];
-				end_part_boundary /= 100.0;
-
-
-				// start_part_boundary = start_part - 1 >= 0 ? clusters[c].single[start_part - 1] : 0;
-				// end_part_boundary = end_part + 1 < clusters[c].single.size() ? clusters[c].single[end_part + 1] : 0;
-
-				for (int j = start_part; j <= end_part; j++)
-					avg[j] = start_part_boundary + (end_part_boundary - start_part_boundary) / (end_part - start_part + 1);
-
-				/////
-
-				debug += S("\t[%d;%d;st=%.2lf;ed=%'.2lf]", start_part, end_part, start_part_boundary, end_part_boundary);
-				
-				if (pos != clusters[c].fatreads.end())
-					start_part = pos->first;
-			}
-
-			prev_pos = pos->first;
-
-			if (pos == clusters[c].fatreads.end()) break;
-			else pos++;			
-		}
-		debug += "\n";*/
 
 		foreach (pos, nr) {
 			if (avg.find(pos->first) == avg.end()) {
@@ -666,7 +649,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 	try {
 		IloCplex cplex(model);
 		cplex.setParam(IloCplex::Threads, 1);
-		cplex.setParam(IloCplex::TiLim, 120);
+		cplex.setParam(IloCplex::TiLim, 60);
 	//	cplex.setParam(IloCplex::TreLim, 8162);
 	//	cplex.setParam(IloCplex::WorkMem, 8162);
 		cplex.setOut(env.getNullStream());

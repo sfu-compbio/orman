@@ -40,7 +40,7 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 	char 		gtf_seqname[MAX_BUFFER],
 		  		gtf_source[MAX_BUFFER],
 		  		gtf_feature[MAX_BUFFER];
-	uint32_t gtf_start, gtf_end;
+	uint32_t 	gtf_start, gtf_end;
 	char 		gtf_score, gtf_strand, gtf_frame;
 
 	
@@ -66,7 +66,18 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 			transcript &t = get_or_insert(g.transcripts, attributes["gene_id"]);
 					// transcript_id"]);
 			
+//		if (attributes["gene_id"]=="ENSG00000135535"&&attributes["partial_ex"]=="7") {
+//				gtf_end=109690124;
+//			}
+
 			assert(attributes.find("partial_ex") != attributes.end());
+
+			// Make it 0-based
+			gtf_start--;
+			gtf_end--; // Interval right is INCLUSIVE here!
+			
+//			if (attributes["gene_id"]=="ENSG00000135535"&&attributes["partial_ex"]=="8");
+//			else
 			t.exons.push_back(exon(gtf_start, gtf_end, attributes["partial_ex"]));
 		//	t.exons.push_back(exon(gtf_start, gtf_end, attributes["exon_number"]));
 
@@ -82,6 +93,7 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 			t.gene = &gi->second;
 			t.name = ti->first;
 			t.id   = transcript_count++;
+			t.length_ = 0;
 
 			sort(t.exons.begin(), t.exons.end());
 			for (int i = 1; i < t.exons.size(); i++) 
@@ -92,6 +104,7 @@ void genome_annotation::parse_gtf (const char *gtf_file) {
 			for (int i = 0; i < t.exons.size(); i++) {
 				t.exons[i].id = i;
 				t.exons[i].transcript = &t;
+				t.length_ += t.exons[i].end-t.exons[i].start+1;
 
 				exon_tree.insert(interval(t.exons[i].start, t.exons[i].end), &t.exons[i]);
 			}

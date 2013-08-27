@@ -12,7 +12,7 @@ public:
 
 	struct exon {
 		uint32_t start,
-					end;
+				 end;
 		int id;
 		string sid;
 		struct transcript *transcript;
@@ -30,27 +30,29 @@ public:
 		string name;
 		vector<exon> exons;
 		struct gene *gene;
+		uint32_t length_;
 
 		transcript (void) {}
 
 		uint32_t length (void) const {
-			return exons[exons.size() - 1].end - exons[0].start + 1;
+			return length_;
+			//return exons[exons.size() - 1].end - exons[0].start + 1;
 		}
 
 		int chromosome (void) const {
 			return gene->chromosome;
 		}
 
-		int position (int k) const {
+		int position (int eid, int k) const {
 			// end exclusive
-			for (int i = 0; i < exons.size(); i++) {
-				if (k <= exons[i].end - exons[i].start)
+			assert(eid < exons.size());
+			for (int i = eid; i < exons.size(); i++) {
+				if (k <= exons[i].end - exons[i].start + 1)
 					return exons[i].start + k;
 				else 
-					k -= exons[i].end - exons[i].start;
+					k -= exons[i].end - exons[i].start + 1;
 			}
-			//E("cannot find...... %d\n", k);
-			assert(0);
+			throw k;
 		}
 	};
 	struct gene {
@@ -63,7 +65,8 @@ public:
 
 private:
 	map<string, gene> genes;
-	map<string, int> chromosomes;
+	map<string, int>  chromosomes;
+	map<int, uint32_t> chromosome_offset;
 
 	interval_tree<exon*> exon_tree;
 
@@ -80,6 +83,14 @@ public:
 		if (it != chromosomes.end()) return it->second;
 		else return -1;
 	}
+
+	void set_chromosome_offset(int chr, uint32_t x) {
+		chromosome_offset[chr] = x;
+	}
+	uint32_t get_chromosome_offset(int chr) {
+		return chromosome_offset[chr];
+	}
+
 	void get_exons (const interval &i, vector<genome_annotation::exon*> &exons);
 	gene *find_gene (uint32_t pos, int chr);
 	int get_transcript_count (void) const { return transcript_count; }
