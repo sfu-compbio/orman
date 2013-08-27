@@ -21,7 +21,7 @@ struct cluster {
 	int id;
 	PT  partial;
 	// position -> [<fatreads ...>]
-	map<int, set<int> > fatreads;
+	map<pair<int, int>, set<int> > fatreads;
 	vector<int> single; // single coverage
 	int  coverage;
 	bool covered;
@@ -36,7 +36,7 @@ struct fatread {
 	// IDs of the reads
 	vector<struct read*> reads;
 	// Cluster ID -> position
-	map<int, int> clusters;
+	map<int, pair<int,int> > clusters;
 	// Cluster ID -> HowMuch
 	map<int, int> solution;
 };
@@ -112,14 +112,14 @@ void initialize_structures (vector<struct read> &reads) {
 			continue;
 
 		// prepare and sort signature!
-		// SIG: <PT+PT1_loc>
-		map<PT, int> sig;
+		// SIG: <PT+PT1,2_loc>
+		map<PT, pair<int,int> > sig;
 		foreach (ei, r.entries) 
-			sig.insert(make_pair(ei->partial, ei->partial_start.first));
+			sig.insert(make_pair(ei->partial, ei->partial_start));
 		// form signature
 		string signature = "";
 		foreach (si, sig) {
-			sprintf(buffer, "%llu+%d;", cluster_index[si->first], si->second);
+			sprintf(buffer, "%llu+%d,%d;", cluster_index[si->first], si->second.first, si->second.second);
 			signature += buffer;
 		}
 
@@ -195,18 +195,19 @@ int set_cover (int read_length) {
 		covers = clusters[i].coverage;
 		// calculate number of non-covered positions!
 		// and update the weight
+		// TODO use second end ... ? 
 		double weight = partial_weight(clusters[i].partial);
-		int notcovered = 0;
-		int prev = 0;
-		foreach (fr, clusters[i].fatreads) {
-			if (fr->first > prev)
-				notcovered += fr->first - prev;
-			prev = fr->first + read_length;
-		}
-		if (prev < partial_length(clusters[i].partial))
-			notcovered += partial_length(clusters[i].partial) - prev;
-		if (notcovered > 1)
-			weight *= (1 + 10.0 * double(notcovered) / partial_length(clusters[i].partial));
+//		int notcovered = 0;
+//		int prev = 0;
+//		foreach (fr, clusters[i].fatreads) {
+//			if (fr->first.first > prev)
+//				notcovered += fr->first - prev;
+//			prev = fr->first + read_length;
+//		}
+//		if (prev < partial_length(clusters[i].partial))
+//			notcovered += partial_length(clusters[i].partial) - prev;
+//		if (notcovered > 1)
+//			weight *= (1 + 10.0 * double(notcovered) / partial_length(clusters[i].partial));
 		heap_handles[i] = heap.push(heap_t(&clusters[i], covers, weight));
 		assert(covers > 0);
 	}
@@ -290,136 +291,136 @@ vector<CLUSTER_STAT> levels;
 
 /* component -- vector id cluster ids to be smoothed */
 int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5000) {
-	pthread_mutex_lock(&mtx_io);
-	L("#Heuristics!\n");
-	fflush(stdout);
-	pthread_mutex_unlock(&mtx_io);
-	// total sum of peaks; red is reduced by heuristics
-	int sum = 0, red = 0;
-	foreach (c, component) {
-		// find average and max peak for this cluster
-		int l = -1; // max peak
-		int L = INT_MAX; // min peak
-		levels[*c].avg = 0;
-		levels[*c].poscnt.resize(clusters[*c].single.size());
-		levels[*c].poscnt_.resize(clusters[*c].single.size());
-		for (int i=0;i<clusters[*c].single.size();i++)
-	 		levels[*c].poscnt[i] = levels[*c].poscnt_[i] = clusters[*c].single[i];
-		foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-			// sum of weights
-			int s = 0; 
-			foreach (r, p->second) // r: fatread
-				s += fatreads[*r].solution[*c];
-			// new max peak?
-			s += clusters[*c].single[p->first];
-			if (s > l) {
-				l = s;
-				levels[*c].maxpos = p->first;
-			}
-			if (s < L) {
-				L = s;
-				levels[*c].minpos = p->first;
-			}
-			s -= clusters[*c].single[p->first];
-			// value on this position
-			// we only consider non-zero positions here
-			levels[*c].poscnt[p->first] += s;
-			levels[*c].poscnt_[p->first] += s;
-			//	E("(%d -> %d) ", p->first, s);
-		}
-		for (int i=0;i<clusters[*c].single.size();i++)
-			levels[*c].avg += levels[*c].poscnt[i];
-		levels[*c].avg /= partial_length(clusters[*c].partial);
-		sum += l;
-	}
+	// pthread_mutex_lock(&mtx_io);
+	// L("#Heuristics!\n");
+	// fflush(stdout);
+	// pthread_mutex_unlock(&mtx_io);
+	// // total sum of peaks; red is reduced by heuristics
+	// int sum = 0, red = 0;
+	// foreach (c, component) {
+	// 	// find average and max peak for this cluster
+	// 	int l = -1; // max peak
+	// 	int L = INT_MAX; // min peak
+	// 	levels[*c].avg = 0;
+	// 	levels[*c].poscnt.resize(clusters[*c].single.size());
+	// 	levels[*c].poscnt_.resize(clusters[*c].single.size());
+	// 	for (int i=0;i<clusters[*c].single.size();i++)
+	//  		levels[*c].poscnt[i] = levels[*c].poscnt_[i] = clusters[*c].single[i];
+	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
+	// 		// sum of weights
+	// 		int s = 0; 
+	// 		foreach (r, p->second) // r: fatread
+	// 			s += fatreads[*r].solution[*c];
+	// 		// new max peak?
+	// 		s += clusters[*c].single[p->first];
+	// 		if (s > l) {
+	// 			l = s;
+	// 			levels[*c].maxpos = p->first;
+	// 		}
+	// 		if (s < L) {
+	// 			L = s;
+	// 			levels[*c].minpos = p->first;
+	// 		}
+	// 		s -= clusters[*c].single[p->first];
+	// 		// value on this position
+	// 		// we only consider non-zero positions here
+	// 		levels[*c].poscnt[p->first] += s;
+	// 		levels[*c].poscnt_[p->first] += s;
+	// 		//	E("(%d -> %d) ", p->first, s);
+	// 	}
+	// 	for (int i=0;i<clusters[*c].single.size();i++)
+	// 		levels[*c].avg += levels[*c].poscnt[i];
+	// 	levels[*c].avg /= partial_length(clusters[*c].partial);
+	// 	sum += l;
+	// }
 
-	// do it! limit the number of iterations as well
-	bool alive = 0;
-	int iters = 0;
-	do {
-		iters++;
-		alive = 0;
-		// iteration limit
-		if (iters > iter_limit) 
-			break;
+	// // do it! limit the number of iterations as well
+	// bool alive = 0;
+	// int iters = 0;
+	// do {
+	// 	iters++;
+	// 	alive = 0;
+	// 	// iteration limit
+	// 	if (iters > iter_limit) 
+	// 		break;
 
-		foreach (c, component) {
-			// <F>rom  component
-			int F = *c;
-			// its peak
-			int c_pos = levels[F].maxpos;
-			// weird case? if so, skip! YES this happens a lot
-			if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
-				continue;
-			if (levels[F].poscnt[c_pos] <= int(levels[F].avg)) // already avearage?
-				continue;
+	// 	foreach (c, component) {
+	// 		// <F>rom  component
+	// 		int F = *c;
+	// 		// its peak
+	// 		int c_pos = levels[F].maxpos;
+	// 		// weird case? if so, skip! YES this happens a lot
+	// 		if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
+	// 			continue;
+	// 		if (levels[F].poscnt[c_pos] <= int(levels[F].avg)) // already avearage?
+	// 			continue;
 
-			// now relocate fatreads at the peak position
-			foreach (fr, clusters[F].fatreads[c_pos]) if (fatreads[*fr].solution[F]) { // find max, opt it
-				// where can we move it?
-				foreach (nt, fatreads[*fr].clusters) /* cluster -> pos */ if (clusters[nt->first].covered && nt->first != F) {
-					// move <T>o T
-					int T = nt->first;
-					int t_pos = nt->second;
+	// 		// now relocate fatreads at the peak position
+	// 		foreach (fr, clusters[F].fatreads[c_pos]) if (fatreads[*fr].solution[F]) { // find max, opt it
+	// 			// where can we move it?
+	// 			foreach (nt, fatreads[*fr].clusters) /* cluster -> pos */ if (clusters[nt->first].covered && nt->first != F) {
+	// 				// move <T>o T
+	// 				int T = nt->first;
+	// 				int t_pos = nt->second;
 
-					// ok; can we move it? any space left?
-					if ( fatreads[*fr].solution[F] > 0 && levels[T].poscnt[t_pos] < levels[T].poscnt[levels[T].maxpos] ) {
-						// move something to there
+	// 				// ok; can we move it? any space left?
+	// 				if ( fatreads[*fr].solution[F] > 0 && levels[T].poscnt[t_pos] < levels[T].poscnt[levels[T].maxpos] ) {
+	// 					// move something to there
 
-						// how many reads should we relocate?
-						int how_much = MIN3(
-								levels[T].poscnt[levels[T].maxpos] - levels[T].poscnt[t_pos], // destination cap
-								fatreads[*fr].solution[F], // source cap
-								levels[F].poscnt[c_pos] - int(levels[F].avg) // do not go below the source average though  
-						);
-						//ADDED NEW!!!
-						how_much = min(how_much, levels[F].poscnt[c_pos] - clusters[F].single[c_pos]);
+	// 					// how many reads should we relocate?
+	// 					int how_much = MIN3(
+	// 							levels[T].poscnt[levels[T].maxpos] - levels[T].poscnt[t_pos], // destination cap
+	// 							fatreads[*fr].solution[F], // source cap
+	// 							levels[F].poscnt[c_pos] - int(levels[F].avg) // do not go below the source average though  
+	// 					);
+	// 					//ADDED NEW!!!
+	// 					how_much = min(how_much, levels[F].poscnt[c_pos] - clusters[F].single[c_pos]);
 
-						//	update results, T part
-						fatreads[*fr].solution[T] += how_much;
-						levels[T].poscnt[t_pos] += how_much;
-						levels[T].avg += double(how_much) / partial_length(clusters[T].partial);
-						if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos]) // update max peak of T
-							levels[T].maxpos = c_pos;
+	// 					//	update results, T part
+	// 					fatreads[*fr].solution[T] += how_much;
+	// 					levels[T].poscnt[t_pos] += how_much;
+	// 					levels[T].avg += double(how_much) / partial_length(clusters[T].partial);
+	// 					if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos]) // update max peak of T
+	// 						levels[T].maxpos = c_pos;
 
-						//	update results, F part
-						fatreads[*fr].solution[F] -= how_much;
-						levels[F].poscnt[c_pos] -= how_much;
-						levels[F].avg -= double(how_much) / partial_length(clusters[F].partial);
+	// 					//	update results, F part
+	// 					fatreads[*fr].solution[F] -= how_much;
+	// 					levels[F].poscnt[c_pos] -= how_much;
+	// 					levels[F].avg -= double(how_much) / partial_length(clusters[F].partial);
 
-						if (c_pos == levels[F].maxpos) { // should we update max level of F?
-							// ol is old maximum
-							int ol = levels[F].poscnt[c_pos] + how_much, l = -1;
-							for (int _p = 0; _p < levels[F].poscnt.size(); _p++) 
-								if (levels[F].poscnt[_p] > l && levels[F].poscnt[_p] > clusters[F].single[_p]) {
-									l = levels[F].poscnt[_p];
-									levels[F].maxpos = _p;
-								}
-							// updated! adjust reduced value
-							// TODO maybe this is not correct. who cares anyway?
-							red += ol - l;
-						}
+	// 					if (c_pos == levels[F].maxpos) { // should we update max level of F?
+	// 						// ol is old maximum
+	// 						int ol = levels[F].poscnt[c_pos] + how_much, l = -1;
+	// 						for (int _p = 0; _p < levels[F].poscnt.size(); _p++) 
+	// 							if (levels[F].poscnt[_p] > l && levels[F].poscnt[_p] > clusters[F].single[_p]) {
+	// 								l = levels[F].poscnt[_p];
+	// 								levels[F].maxpos = _p;
+	// 							}
+	// 						// updated! adjust reduced value
+	// 						// TODO maybe this is not correct. who cares anyway?
+	// 						red += ol - l;
+	// 					}
 
-						// done with F
-						if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
-							goto end;
-						// again done with F (this can happen because of rounding)
-						if (levels[F].poscnt[c_pos] <= int(levels[F].avg))
-							goto end;
+	// 					// done with F
+	// 					if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
+	// 						goto end;
+	// 					// again done with F (this can happen because of rounding)
+	// 					if (levels[F].poscnt[c_pos] <= int(levels[F].avg))
+	// 						goto end;
 
-						// let's go again!
-						alive = 1;
-					}
-				}
-			}
-	end:; // goto ftw!
-		}
-	} while (alive);
-	/*foreach (c, component) {
-		L("# %s\n", print_pt(clusters[*c].partial).c_str());
-		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt_[i]); L("\n");
-		for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt [i]); L("\n");
-	}*/
+	// 					// let's go again!
+	// 					alive = 1;
+	// 				}
+	// 			}
+	// 		}
+	// end:; // goto ftw!
+	// 	}
+	// } while (alive);
+	// /*foreach (c, component) {
+	// 	L("# %s\n", print_pt(clusters[*c].partial).c_str());
+	// 	for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt_[i]); L("\n");
+	// 	for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt [i]); L("\n");
+	// }*/ 
 }
 
 vector< vector<double> > avg__;
@@ -451,9 +452,13 @@ string print_stats () {
 		}
 		foreach (fp, clusters[i].fatreads)
 			foreach (fr, fp->second) { 
-				for(int j=0; j<read_length&&fp->first+j<cova.size();j++) {
-					covb[fp->first+j] += fatreads[*fr].reads.size();
-					cova[fp->first+j] += fatreads[*fr].solution[i];
+				for(int j=0; j<read_length&&fp->first.first+j<cova.size();j++) {
+					covb[fp->first.first+j] += fatreads[*fr].reads.size();
+					cova[fp->first.first+j] += fatreads[*fr].solution[i];
+				}
+				for(int j=0; j<read_length&&fp->first.second+j<cova.size();j++) {
+					covb[fp->first.second+j] += fatreads[*fr].reads.size();
+					cova[fp->first.second+j] += fatreads[*fr].solution[i];
 				}
 			}
 		for (int j = 0; j < cova.size(); j++) 
@@ -494,7 +499,6 @@ void cplex_smooth (const vector<int> &component, int id) {
 	IloExpr objective(env);
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
-		
 	/*	double avg = 0; int sz = 0;
 		for (int x = 0; x < clusters[c].single.size(); x++)
 			if (clusters[c].fatreads.find(x) == clusters[c].fatreads.end()) 
@@ -503,7 +507,6 @@ void cplex_smooth (const vector<int> &component, int id) {
 				avg += clusters[c].single[x];
 			}
 		avg /= sz;*/
-
 		objective += d[ci]; // / avg;
 	}
 	model.add(IloMinimize(env, objective));
@@ -518,20 +521,23 @@ void cplex_smooth (const vector<int> &component, int id) {
 		// j -> Expr
 		map<int, IloExpr> nr;
 		foreach (pos, clusters[c].fatreads) { 
-			for (int i = 0; i < read_length && pos->first + i < clusters[c].single.size(); i++) {
-				int coo = pos->first + i;
+			for (int i = 0; i < read_length && pos->first.first + i < clusters[c].single.size(); i++) {
+				int coo = pos->first.first + i;
 				auto it = nr.find(coo);
 				if (it == nr.end()) 
 					nr[coo] = IloExpr(env);
-				
 				foreach (r, pos->second)
 					nr[coo] += variables[make_pair(*r, c)];	
 			}
-
-			//nr.push_back(IloExpr(env));
-			//nr.back() += (double)clusters[c].single[pos->first];
-			//foreach (r, pos->second)
-			//	nr.back() += variables[make_pair(*r, c)];
+			// second pair ...
+			for (int i = 0; i < read_length && pos->first.second + i < clusters[c].single.size(); i++) {
+				int coo = pos->first.second + i;
+				auto it = nr.find(coo);
+				if (it == nr.end()) 
+					nr[coo] = IloExpr(env);
+				foreach (r, pos->second)
+					nr[coo] += variables[make_pair(*r, c)];	
+			}
 		}
 		foreach (pos, nr)
 			pos->second += (double)clusters[c].single[pos->first];
@@ -551,18 +557,18 @@ void cplex_smooth (const vector<int> &component, int id) {
 				//assert(start_part!=-1);
 				sp = get_gene_position(clusters[c].partial, start_part), 
 				ep = get_gene_position(clusters[c].partial, i-1);
-				L("Region %d..%d (%d..%d) (%'u..%'u)\t", start_part, i, sp, ep, g2G(clusters[c].partial.first->transcript, sp), g2G(clusters[c].partial.first->transcript, ep));
+				//L("Region %d..%d (%d..%d) (%'u..%'u)\t", start_part, i, sp, ep, g2G(clusters[c].partial.first->transcript, sp), g2G(clusters[c].partial.first->transcript, ep));
 				
-				L("%d%d   ",is_multimap(g2G(clusters[c].partial.first->transcript, sp)),is_multimap(g2G(clusters[c].partial.first->transcript, ep)));
-				if(print_pt(clusters[c].partial)=="ENSG00000135535.e7e8_")
-					for(unsigned int q=2372891821u;q<2372892226u;q++)
-						L("%d",is_multimap(q)); L("    ");
+				//L("%d%d   ",is_multimap(g2G(clusters[c].partial.first->transcript, sp)),is_multimap(g2G(clusters[c].partial.first->transcript, ep)));
+				//if(print_pt(clusters[c].partial)=="ENSG00000135535.e7e8_")
+				//	for(unsigned int q=2372891821u;q<2372892226u;q++)
+				//		L("%d",is_multimap(q)); L("    ");
 
 				while (sp >= 0 && is_multimap(g2G(clusters[c].partial.first->transcript, sp))) sp--, offset++;
 				while (ep < clusters[c].partial.first->transcript->length() && 
 					is_multimap(g2G(clusters[c].partial.first->transcript, ep))) ep++;
 
-				L("Enl to %d..%d\t", sp, ep);
+				//L("Enl to %d..%d\t", sp, ep);
 
 				int neighbourhood = 1.5 * read_length, steps;
 
@@ -588,7 +594,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 				if (fabs(end_part_boundary) < 1e-6)
 					end_part_boundary = start_part_boundary;
 
-				L("%s st %.2lf %d ed %.2lf %d [%d %d]\n", print_pt(clusters[c].partial).c_str(), start_part_boundary, end_part_boundary, start_part, i, sp, ep);
+				//L("%s st %.2lf %d ed %.2lf %d [%d %d]\n", print_pt(clusters[c].partial).c_str(), start_part_boundary, end_part_boundary, start_part, i, sp, ep);
 
 				for (int j = start_part; j < i; j++) {
 					avg[j] = start_part_boundary + 
@@ -798,13 +804,14 @@ void update_solution (vector<struct read> &reads) {
 			for (int c = 0; c < si->second; c++) {
 				struct read *r = fi->reads[i + c];
 				cluster &cx = clusters[si->first];
-				int p_start = fi->clusters[si->first];
+				
+				pair<int,int> p_start = fi->clusters[si->first];
 
 				// find the read
 				// TODO what if multiple mappings on same pos?
 				read::read_entry rhs;
 				foreach (ei, r->entries)
-					if (ei->partial == cx.partial && ei->partial_start.first == p_start) {
+					if (ei->partial == cx.partial && ei->partial_start.first == p_start.first && ei->partial_start.second == p_start.second) {
 						rhs = *ei;
 						break;
 					}
