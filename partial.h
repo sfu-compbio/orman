@@ -34,7 +34,9 @@ struct PT_single {
 typedef PT_single 			PTs;
 typedef const PT_single* 	PTsp;
 
-struct PT {
+typedef PTsp PT;
+
+/*struct PT {
 	PTsp first;
 	PTsp second;
 
@@ -42,7 +44,7 @@ struct PT {
 	PT(PTsp a, PTsp b): first(a), second(b) {}
 	bool operator== (const PT &x) const { return first==x.first && second==x.second; }
 	bool operator< (const PT &x) const { return first<x.first || (first==x.first && second<x.second); }
-};
+};*/
 //ypedef pair<PTsp, PTsp> 	PT;  
  uint32_t get_absolute_position (const PT &p, int k);
  uint32_t get_gene_position (const PT &p, int k);

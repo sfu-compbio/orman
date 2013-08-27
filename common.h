@@ -51,5 +51,7 @@ uint64_t zaman_start();
 uint64_t zaman_last();
 std::string numtostr(int n);
 
+extern bool retain_junk;
+
 #endif // COMMON_H__
 

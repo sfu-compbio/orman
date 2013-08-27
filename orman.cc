@@ -2,6 +2,7 @@
 
 #include "common.h"
 #include "orman.h"
+#include "parser.h"
 #include <boost/heap/fibonacci_heap.hpp>
 #include <ilcplex/ilocplex.h>
 #include <inttypes.h>
@@ -44,8 +45,8 @@ vector<fatread> fatreads;
 
 string print_pt(const PT &p)  {
 	char c[500];
-	PTsp pt1 = p.first, pt2=p.second;
-	sprintf(c, "%s_%s", string(pt1->transcript->gene->name + "." + pt1->signature).c_str(), pt2?string(pt2->transcript->gene->name + "." + pt2->signature).c_str():"");
+	PTsp pt1 = p;
+	sprintf(c, "%s", string(pt1->transcript->gene->name + "." + pt1->signature).c_str());
 	return string(c);
 }
 
@@ -62,21 +63,20 @@ static string S (const char* f, ...) {
 	return string(bf);
 }
 
-static int read_length;
-
 /*****************************************************************************************/
 
 int partial_length (const PT &p)  {
-	return p.first->length;
+	return p->length;
 }
 
 int partial_weight (const PT &p) {
-	if (!p.second)
+	return p->weight;
+	/*if (!p.second)
 		return 1000000 + p.first->weight;
 	else if (p.first->transcript == p.second->transcript)
 		return p.first->weight + p.second->weight;
 	else 
-		return p.first->weight + p.second->weight + 100000;
+		return p.first->weight + p.second->weight + 100000;*/
 }
 
 void initialize_structures (vector<struct read> &reads) {
@@ -281,148 +281,143 @@ public:
 
 typedef struct { 
 	double avg; // average value
-	int maxpos; // maxpeak
-	int minpos;
+	pair<int,int> maxpos; // maxpeak
+	pair<int,int> minpos;
 	vector<int> poscnt; // graph, X->Y for non-zeros (most of the time)
-	vector<int> poscnt_; // graph, X->Y for non-zeros (most of the time)
+//	vector<int> poscnt_; // graph, X->Y for non-zeros (most of the time)
 } CLUSTER_STAT;
 #define MIN3(a,b,c)  (min(a,min(b,c)))
 vector<CLUSTER_STAT> levels;
 
 /* component -- vector id cluster ids to be smoothed */
 int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5000) {
-	// pthread_mutex_lock(&mtx_io);
-	// L("#Heuristics!\n");
-	// fflush(stdout);
-	// pthread_mutex_unlock(&mtx_io);
-	// // total sum of peaks; red is reduced by heuristics
-	// int sum = 0, red = 0;
-	// foreach (c, component) {
-	// 	// find average and max peak for this cluster
-	// 	int l = -1; // max peak
-	// 	int L = INT_MAX; // min peak
-	// 	levels[*c].avg = 0;
-	// 	levels[*c].poscnt.resize(clusters[*c].single.size());
-	// 	levels[*c].poscnt_.resize(clusters[*c].single.size());
-	// 	for (int i=0;i<clusters[*c].single.size();i++)
-	//  		levels[*c].poscnt[i] = levels[*c].poscnt_[i] = clusters[*c].single[i];
-	// 	foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
-	// 		// sum of weights
-	// 		int s = 0; 
-	// 		foreach (r, p->second) // r: fatread
-	// 			s += fatreads[*r].solution[*c];
-	// 		// new max peak?
-	// 		s += clusters[*c].single[p->first];
-	// 		if (s > l) {
-	// 			l = s;
-	// 			levels[*c].maxpos = p->first;
-	// 		}
-	// 		if (s < L) {
-	// 			L = s;
-	// 			levels[*c].minpos = p->first;
-	// 		}
-	// 		s -= clusters[*c].single[p->first];
-	// 		// value on this position
-	// 		// we only consider non-zero positions here
-	// 		levels[*c].poscnt[p->first] += s;
-	// 		levels[*c].poscnt_[p->first] += s;
-	// 		//	E("(%d -> %d) ", p->first, s);
-	// 	}
-	// 	for (int i=0;i<clusters[*c].single.size();i++)
-	// 		levels[*c].avg += levels[*c].poscnt[i];
-	// 	levels[*c].avg /= partial_length(clusters[*c].partial);
-	// 	sum += l;
-	// }
+	pthread_mutex_lock(&mtx_io);
+	L("#Heuristics!\n");
+	fflush(stdout);
+	pthread_mutex_unlock(&mtx_io);
+	// total sum of peaks; red is reduced by heuristics
+	int sum = 0, red = 0;
+	foreach (c, component) {
+		// find average and max peak for this cluster
+		int l = -1; // max peak
+		int L = INT_MAX; // min peak
+		levels[*c].avg = 0;
+		levels[*c].poscnt.resize(clusters[*c].single.size());
+		//levels[*c].poscnt_.resize(clusters[*c].single.size());
+		for (int i=0;i<clusters[*c].single.size();i++)
+	 		levels[*c].poscnt[i] = /*levels[*c].poscnt_[i] =*/ clusters[*c].single[i];
+		foreach (p, clusters[*c].fatreads) { // p: pos -> [fatread...]
+			// sum of weights
+			int s = 0; 
+			foreach (r, p->second) // r: fatread
+				s += fatreads[*r].solution[*c];
+			// new max peak?
+			s += clusters[*c].single[p->first.first];
+			if (s > l) {
+				l = s;
+				levels[*c].maxpos = p->first;
+			}
+			if (s < L) {
+				L = s;
+				levels[*c].minpos = p->first;
+			}
+			s -= clusters[*c].single[p->first.first];
+			// value on this position
+			// we only consider non-zero positions here
+			levels[*c].poscnt[p->first.first] += s;
+		//	levels[*c].poscnt_[p->first.first] += s;
+			//	E("(%d -> %d) ", p->first, s);
+		}
+		for (int i=0;i<clusters[*c].single.size();i++)
+			levels[*c].avg += levels[*c].poscnt[i];
+		levels[*c].avg /= partial_length(clusters[*c].partial);
+		sum += l;
+	}
 
-	// // do it! limit the number of iterations as well
-	// bool alive = 0;
-	// int iters = 0;
-	// do {
-	// 	iters++;
-	// 	alive = 0;
-	// 	// iteration limit
-	// 	if (iters > iter_limit) 
-	// 		break;
+	// do it! limit the number of iterations as well
+	bool alive = 0;
+	int iters = 0;
+	do {
+		iters++;
+		alive = 0;
+		// iteration limit
+		if (iters > iter_limit) 
+			break;
 
-	// 	foreach (c, component) {
-	// 		// <F>rom  component
-	// 		int F = *c;
-	// 		// its peak
-	// 		int c_pos = levels[F].maxpos;
-	// 		// weird case? if so, skip! YES this happens a lot
-	// 		if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
-	// 			continue;
-	// 		if (levels[F].poscnt[c_pos] <= int(levels[F].avg)) // already avearage?
-	// 			continue;
+		foreach (c, component) {
+			// <F>rom  component
+			int F = *c;
+			// its peak
+			pair<int,int> c_pos = levels[F].maxpos;
+			// weird case? if so, skip! YES this happens a lot
+			if (levels[F].poscnt[c_pos.first] <= clusters[F].single[c_pos.first]) 
+				continue;
+			if (levels[F].poscnt[c_pos.first] <= int(levels[F].avg)) // already avearage?
+				continue;
 
-	// 		// now relocate fatreads at the peak position
-	// 		foreach (fr, clusters[F].fatreads[c_pos]) if (fatreads[*fr].solution[F]) { // find max, opt it
-	// 			// where can we move it?
-	// 			foreach (nt, fatreads[*fr].clusters) /* cluster -> pos */ if (clusters[nt->first].covered && nt->first != F) {
-	// 				// move <T>o T
-	// 				int T = nt->first;
-	// 				int t_pos = nt->second;
+			// now relocate fatreads at the peak position
+			foreach (frx, clusters[F].fatreads) if (frx->first.first == c_pos.first) foreach (fr, frx->second) if (fatreads[*fr].solution[F]) { // find max, opt it
+				// where can we move it?
+				foreach (nt, fatreads[*fr].clusters) /* cluster -> pos */ if (clusters[nt->first].covered && nt->first != F) {
+					// move <T>o T
+					int T = nt->first;
+					int t_pos = nt->second.first;
 
-	// 				// ok; can we move it? any space left?
-	// 				if ( fatreads[*fr].solution[F] > 0 && levels[T].poscnt[t_pos] < levels[T].poscnt[levels[T].maxpos] ) {
-	// 					// move something to there
+					// ok; can we move it? any space left?
+					if ( fatreads[*fr].solution[F] > 0 && levels[T].poscnt[t_pos] < levels[T].poscnt[levels[T].maxpos.first] ) {
+						// move something to there
 
-	// 					// how many reads should we relocate?
-	// 					int how_much = MIN3(
-	// 							levels[T].poscnt[levels[T].maxpos] - levels[T].poscnt[t_pos], // destination cap
-	// 							fatreads[*fr].solution[F], // source cap
-	// 							levels[F].poscnt[c_pos] - int(levels[F].avg) // do not go below the source average though  
-	// 					);
-	// 					//ADDED NEW!!!
-	// 					how_much = min(how_much, levels[F].poscnt[c_pos] - clusters[F].single[c_pos]);
+						// how many reads should we relocate?
+						int how_much = MIN3(
+								levels[T].poscnt[levels[T].maxpos.first] - levels[T].poscnt[t_pos], // destination cap
+								fatreads[*fr].solution[F], // source cap
+								levels[F].poscnt[c_pos.first] - int(levels[F].avg) // do not go below the source average though  
+						);
+						//ADDED NEW!!!
+						how_much = min(how_much, levels[F].poscnt[c_pos.first] - clusters[F].single[c_pos.first]);
 
-	// 					//	update results, T part
-	// 					fatreads[*fr].solution[T] += how_much;
-	// 					levels[T].poscnt[t_pos] += how_much;
-	// 					levels[T].avg += double(how_much) / partial_length(clusters[T].partial);
-	// 					if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos]) // update max peak of T
-	// 						levels[T].maxpos = c_pos;
+						//	update results, T part
+						fatreads[*fr].solution[T] += how_much;
+						levels[T].poscnt[t_pos] += how_much;
+						levels[T].avg += double(how_much) / partial_length(clusters[T].partial);
+						if (levels[T].poscnt[t_pos] > levels[T].poscnt[levels[T].maxpos.first]) // update max peak of T
+							levels[T].maxpos = c_pos;
 
-	// 					//	update results, F part
-	// 					fatreads[*fr].solution[F] -= how_much;
-	// 					levels[F].poscnt[c_pos] -= how_much;
-	// 					levels[F].avg -= double(how_much) / partial_length(clusters[F].partial);
+						//	update results, F part
+						fatreads[*fr].solution[F] -= how_much;
+						levels[F].poscnt[c_pos.first] -= how_much;
+						levels[F].avg -= double(how_much) / partial_length(clusters[F].partial);
 
-	// 					if (c_pos == levels[F].maxpos) { // should we update max level of F?
-	// 						// ol is old maximum
-	// 						int ol = levels[F].poscnt[c_pos] + how_much, l = -1;
-	// 						for (int _p = 0; _p < levels[F].poscnt.size(); _p++) 
-	// 							if (levels[F].poscnt[_p] > l && levels[F].poscnt[_p] > clusters[F].single[_p]) {
-	// 								l = levels[F].poscnt[_p];
-	// 								levels[F].maxpos = _p;
-	// 							}
-	// 						// updated! adjust reduced value
-	// 						// TODO maybe this is not correct. who cares anyway?
-	// 						red += ol - l;
-	// 					}
+						if (c_pos == levels[F].maxpos) { // should we update max level of F?
+							// ol is old maximum
+							int ol = levels[F].poscnt[c_pos.first] + how_much, l = -1;
+							for (int _p = 0; _p < levels[F].poscnt.size(); _p++) 
+								if (levels[F].poscnt[_p] > l && levels[F].poscnt[_p] > clusters[F].single[_p]) {
+									l = levels[F].poscnt[_p];
+									levels[F].maxpos.first = _p;
+								}
+							// updated! adjust reduced value
+							// TODO maybe this is not correct. who cares anyway?
+							red += ol - l;
+						}
 
-	// 					// done with F
-	// 					if (levels[F].poscnt[c_pos] <= clusters[F].single[c_pos]) 
-	// 						goto end;
-	// 					// again done with F (this can happen because of rounding)
-	// 					if (levels[F].poscnt[c_pos] <= int(levels[F].avg))
-	// 						goto end;
+						// done with F
+						if (levels[F].poscnt[c_pos.first] <= clusters[F].single[c_pos.first]) 
+							goto end;
+						// again done with F (this can happen because of rounding)
+						if (levels[F].poscnt[c_pos.first] <= int(levels[F].avg))
+							goto end;
 
-	// 					// let's go again!
-	// 					alive = 1;
-	// 				}
-	// 			}
-	// 		}
-	// end:; // goto ftw!
-	// 	}
-	// } while (alive);
-	// /*foreach (c, component) {
-	// 	L("# %s\n", print_pt(clusters[*c].partial).c_str());
-	// 	for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt_[i]); L("\n");
-	// 	for (int i=0;i<levels[*c].poscnt_.size();i++) L("(%d,%d) ",i,levels[*c].poscnt [i]); L("\n");
-	// }*/ 
+						// let's go again!
+						alive = 1;
+					}
+				}
+			}
+	end:; // goto ftw!
+		}
+	} while (alive);
 }
-
+/*
 vector< vector<double> > avg__;
 string print_stats () {
 	string s;
@@ -472,11 +467,11 @@ string print_stats () {
 	}
 	return s;
 }
-
+*/
 void cplex_smooth (const vector<int> &component, int id) {
-	avg__.resize(clusters.size());
+	/*avg__.resize(clusters.size());
 	for(int i=0;i<clusters.size();i++)
-		avg__[i].resize(clusters[i].single.size(),0);
+		avg__[i].resize(clusters[i].single.size(),0);*/
 
 	IloEnv env;
 
@@ -515,7 +510,6 @@ void cplex_smooth (const vector<int> &component, int id) {
 	string debug;
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
-
 		debug += print_pt(clusters[c]);	
 
 		// j -> Expr
@@ -564,9 +558,9 @@ void cplex_smooth (const vector<int> &component, int id) {
 				//	for(unsigned int q=2372891821u;q<2372892226u;q++)
 				//		L("%d",is_multimap(q)); L("    ");
 
-				while (sp >= 0 && is_multimap(g2G(clusters[c].partial.first->transcript, sp))) sp--, offset++;
-				while (ep < clusters[c].partial.first->transcript->length() && 
-					is_multimap(g2G(clusters[c].partial.first->transcript, ep))) ep++;
+				while (sp >= 0 && is_multimap(g2G(clusters[c].partial->transcript, sp))) sp--, offset++;
+				while (ep < clusters[c].partial->transcript->length() && 
+					is_multimap(g2G(clusters[c].partial->transcript, ep))) ep++;
 
 				//L("Enl to %d..%d\t", sp, ep);
 
@@ -576,16 +570,16 @@ void cplex_smooth (const vector<int> &component, int id) {
 				steps = 1;
 				if(sp) for (int32_t j = sp; j >= 0 
 						&& j >= sp - neighbourhood
-						&& !is_multimap(g2G(clusters[c].partial.first->transcript, j)); j--)
-					start_part_boundary += get_single_coverage(g2G(clusters[c].partial.first->transcript, j)), steps++;
+						&& !is_multimap(g2G(clusters[c].partial->transcript, j)); j--)
+					start_part_boundary += get_single_coverage(g2G(clusters[c].partial->transcript, j)), steps++;
 				start_part_boundary /= steps;
 
 				double end_part_boundary = 0;
 				steps = 1;
-				for (uint32_t j = ep; j < clusters[c].partial.first->transcript->length() &&
+				for (uint32_t j = ep; j < clusters[c].partial->transcript->length() &&
 						j < ep + neighbourhood 
-						&& !is_multimap(g2G(clusters[c].partial.first->transcript, j)); j++)
-					end_part_boundary += get_single_coverage(g2G(clusters[c].partial.first->transcript, j)), steps++;
+						&& !is_multimap(g2G(clusters[c].partial->transcript, j)); j++)
+					end_part_boundary += get_single_coverage(g2G(clusters[c].partial->transcript, j)), steps++;
 				end_part_boundary /= steps;
 
 				//E("part %d,%d of %d\n",start_part,i,clusters[c].single.size());
@@ -606,8 +600,8 @@ void cplex_smooth (const vector<int> &component, int id) {
 			start_part = i;
 		}
 
-		foreach(pos,avg)
-			avg__[c][pos->first]=pos->second;
+		/*foreach(pos,avg)
+			avg__[c][pos->first]=pos->second;*/
 
 		foreach (pos, nr) {
 			if (avg.find(pos->first) == avg.end()) {
@@ -764,7 +758,7 @@ void connected_components (void) {
 
 	// start threading!!
 	
-	int thread_count = 1;//min((int)sysconf(_SC_NPROCESSORS_ONLN) - 1, 20);
+	int thread_count = min((int)sysconf(_SC_NPROCESSORS_ONLN) - 1, 20);
 	threads = new pthread_t[thread_count];
 	pthread_mutex_init(&mtx_access, 0);
 	pthread_mutex_init(&mtx_io, 0);
@@ -835,8 +829,6 @@ void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read
 	initialize_structures(reads);
 	E("done in %d seconds!\n", zaman_last());
 
-	::read_length = read_length;
-
 	E("Set cover ...\n");
 	int n = set_cover(read_length);
 	E("\t%'d out of %'d clusters selected\ndone in %d seconds!\n", n, clusters.size(), zaman_last());
@@ -853,12 +845,12 @@ void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read
 	update_solution(reads);
 	E("done in %d seconds!\n", zaman_last());
 
-	E("Plotting ... \n");
+	/*E("Plotting ... \n");
 	string s = print_stats();
 	FILE *fx = fopen("plots/script.gnuplot", "w");
 	fwrite(s.c_str(), 1, s.size(), fx);
 	fclose(fx);
 	system("/home/inumanag/Applications/usr/bin/gnuplot plots/script.gnuplot");
-	E("done in %d seconds!\n", zaman_last());
+	E("done in %d seconds!\n", zaman_last());*/
 }
 
