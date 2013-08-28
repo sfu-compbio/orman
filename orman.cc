@@ -473,6 +473,9 @@ void cplex_smooth (const vector<int> &component, int id) {
 	for(int i=0;i<clusters.size();i++)
 		avg__[i].resize(clusters[i].single.size(),0);*/
 
+	int no_fatreads = 0,
+		no_reads = 0;
+
 	IloEnv env;
 
 	// component -> (fatread)
@@ -544,7 +547,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 				while (i < clusters[c].single.size() && nr.find(i) != nr.end())
 					i++;
 
-				L("%s\t", print_pt(clusters[c].partial).c_str());
+				// L("%s\t", print_pt(clusters[c].partial).c_str());
 
 				int offset = 0;
 				int32_t sp, ep;
@@ -687,7 +690,7 @@ void cplex_smooth (const vector<int> &component, int id) {
 			raii_lock _l(mtx_io);
 			string s = ex.getMessage();
 			s[s.size() - 1] = 0; // trim \n
-			L("#CPLEX Exception: %s; Instance: %s; ", s.c_str(), model_id);
+			L("#CPLEX Error: %s; Component size: %'d; Instance: %s; ", s.c_str(), component.size(), model_id);
 			fflush(stdout);
 		}
 		ex.end();
@@ -829,19 +832,17 @@ void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read
 	initialize_structures(reads);
 	E("done in %d seconds!\n", zaman_last());
 
-	E("Set cover ...\n");
+	E("Set cover and probabilistic assign ...\n");
 	int n = set_cover(read_length);
+	probabilistic_assign();
 	E("\t%'d out of %'d clusters selected\ndone in %d seconds!\n", n, clusters.size(), zaman_last());
 
 	E("Probabilistic assign ...\n");
-	probabilistic_assign();
+	
 	E("done in %d seconds!\n", zaman_last());
 
-	E("Connected component decomposition ...\n");
+	E("Connected component decomposition and CPLEX assignment ...\n");
 	connected_components();
-	E("done in %d seconds!\n", zaman_last());
-
-	E("Updating solution ... \n");
 	update_solution(reads);
 	E("done in %d seconds!\n", zaman_last());
 
