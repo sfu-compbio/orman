@@ -1,4 +1,38 @@
-/// 786
+/* 786 
+ *
+ * Copyright (c) 2012, 2013, Simon Fraser University
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without modification,
+ * are permitted provided that the following conditions are met:
+ *
+ * Redistributions of source code must retain the above copyright notice, this list
+ * of conditions and the following disclaimer.
+ * - Redistributions in binary form must reproduce the above copyright notice, this
+ *   list of conditions and the following disclaimer in the documentation and/or other
+ *   materials provided with the distribution.
+ * - Neither the name of the Simon Fraser University nor the names of its contributors may be
+ *   used to endorse or promote products derived from this software without specific
+ *   prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+ * LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+ * NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+ * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/*
+ * Author         : Ibrahim Numanagic
+ * Email          : inumanag AT sfu DOT ca
+ * Last Update    : 30. ix 2013.
+ */
 
 #include "common.h"
 #include "orman.h"
@@ -16,7 +50,6 @@
 #include <pthread.h>
 
 using namespace std;
-using namespace boost::heap;
 
 struct cluster {
 	int id;
@@ -71,12 +104,6 @@ int partial_length (const PT &p)  {
 
 int partial_weight (const PT &p) {
 	return p->weight;
-	/*if (!p.second)
-		return 1000000 + p.first->weight;
-	else if (p.first->transcript == p.second->transcript)
-		return p.first->weight + p.second->weight;
-	else 
-		return p.first->weight + p.second->weight + 100000;*/
 }
 
 void initialize_structures (vector<struct read> &reads) {
@@ -124,7 +151,7 @@ void initialize_structures (vector<struct read> &reads) {
 		}
 
 		// add fatread to the index if it is not there
-		auto fi = fatread_index.find(signature);
+		map<string, int>::iterator fi = fatread_index.find(signature);
 		int fid;
 		if (fi == fatread_index.end()) {
 			fid = fatread_index.size();
@@ -155,9 +182,10 @@ void initialize_structures (vector<struct read> &reads) {
 
 	// initialize coverage
 	for (int i = 0; i < clusters.size(); i++) {
-		foreach (pos, clusters[i].fatreads) 
+		foreach (pos, clusters[i].fatreads) { 
 			foreach (fr, pos->second) // in fatreads
-			clusters[i].coverage += fatreads[*fr].reads.size();
+				clusters[i].coverage += fatreads[*fr].reads.size();
+		}
 	}
 
 	E("\t%'d fatreads, %'d clusters\n", fatreads.size(), clusters.size());
@@ -188,14 +216,13 @@ struct heap_t {
 };
 
 int set_cover (int read_length) {
-	fibonacci_heap<heap_t> heap;
-	vector<fibonacci_heap<heap_t>::handle_type> heap_handles(clusters.size());
+	boost::heap::fibonacci_heap<heap_t> heap;
+	vector<boost::heap::fibonacci_heap<heap_t>::handle_type> heap_handles(clusters.size());
 	for (int i = 0; i < clusters.size(); i++) {
 		int covers = 0;
 		covers = clusters[i].coverage;
 		// calculate number of non-covered positions!
 		// and update the weight
-		// TODO use second end ... ? 
 		double weight = partial_weight(clusters[i].partial);
 //		int notcovered = 0;
 //		int prev = 0;
@@ -278,21 +305,20 @@ public:
     ~raii_lock(void) { pthread_mutex_unlock(&mutex); }
 };
 
-
 typedef struct { 
 	double avg; // average value
 	pair<int,int> maxpos; // maxpeak
 	pair<int,int> minpos;
 	vector<int> poscnt; // graph, X->Y for non-zeros (most of the time)
-//	vector<int> poscnt_; // graph, X->Y for non-zeros (most of the time)
 } CLUSTER_STAT;
 #define MIN3(a,b,c)  (min(a,min(b,c)))
 vector<CLUSTER_STAT> levels;
 
 /* component -- vector id cluster ids to be smoothed */
 int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5000) {
+	// here be dragons ....
 	pthread_mutex_lock(&mtx_io);
-	L("#Heuristics!\n");
+	// L("#Heuristics!\n");
 	fflush(stdout);
 	pthread_mutex_unlock(&mtx_io);
 	// total sum of peaks; red is reduced by heuristics
@@ -417,62 +443,8 @@ int heuristics_smooth (const vector<int> &component, int _id, int iter_limit = 5
 		}
 	} while (alive);
 }
-/*
-vector< vector<double> > avg__;
-string print_stats () {
-	string s;
 
-	s += 	"set terminal pngcairo size 1000,500 enhanced font 'Arial,9'\n"
-			"set style fill transparent solid 0.75 noborder\n"
-			"set style line 1 linecolor rgb 'black' linetype 1 linewidth 2\n"
-			"set yrange [0:4000]\n";
-	//  set ytics (105, 100, 95, 90, 85, 80)
-
-
-
-	for (int i = 0; i < clusters.size(); i++) {
-		string name = print_pt(clusters[i]);
-
-		s += S("set output 'plots/%s.png'\n", name.c_str());
-		s += S("set title '%s'\n", name.c_str());
-
-		string path = S("plots/%s.g", name.c_str());
-		FILE *fx = fopen(path.c_str(), "w");
-
-		vector<int> covb(clusters[i].single.size());
-		vector<int> cova(clusters[i].single.size());
-		for (int j = 0; j < cova.size(); j++) {
-			covb[j] = clusters[i].single[j];
-			cova[j] = clusters[i].single[j];
-		}
-		foreach (fp, clusters[i].fatreads)
-			foreach (fr, fp->second) { 
-				for(int j=0; j<read_length&&fp->first.first+j<cova.size();j++) {
-					covb[fp->first.first+j] += fatreads[*fr].reads.size();
-					cova[fp->first.first+j] += fatreads[*fr].solution[i];
-				}
-				for(int j=0; j<read_length&&fp->first.second+j<cova.size();j++) {
-					covb[fp->first.second+j] += fatreads[*fr].reads.size();
-					cova[fp->first.second+j] += fatreads[*fr].solution[i];
-				}
-			}
-		for (int j = 0; j < cova.size(); j++) 
-			fprintf(fx, "%d %d %d %d %.1lf\n", j, clusters[i].single[j], covb[j], cova[j], avg__[i][j]);
-		fclose(fx);
-
-		s += S(	"plot '%s' using 1:3 title 'before orman' with filledcurves x1, "
-				"'' using 1:4 title 'after orman' with filledcurves x1, "
-				"'' using 1:2 title 'single coverage' with filledcurves x1, "
-				"'' using 1:5 title 'average points' with lines linestyle 1\n", path.c_str());
-	}
-	return s;
-}
-*/
 void cplex_smooth (const vector<int> &component, int id) {
-	/*avg__.resize(clusters.size());
-	for(int i=0;i<clusters.size();i++)
-		avg__[i].resize(clusters[i].single.size(),0);*/
-
 	int no_fatreads = 0,
 		no_reads = 0;
 
@@ -497,30 +469,19 @@ void cplex_smooth (const vector<int> &component, int id) {
 	IloExpr objective(env);
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
-	/*	double avg = 0; int sz = 0;
-		for (int x = 0; x < clusters[c].single.size(); x++)
-			if (clusters[c].fatreads.find(x) == clusters[c].fatreads.end()) 
-			{
-				sz++;
-				avg += clusters[c].single[x];
-			}
-		avg /= sz;*/
 		objective += d[ci]; // / avg;
 	}
-	model.add(IloMinimize(env, objective));
 
 	// -D <= AV - NR <= D
-	string debug;
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
-		debug += print_pt(clusters[c]);	
-
+		
 		// j -> Expr
 		map<int, IloExpr> nr;
 		foreach (pos, clusters[c].fatreads) { 
 			for (int i = 0; i < read_length && pos->first.first + i < clusters[c].single.size(); i++) {
 				int coo = pos->first.first + i;
-				auto it = nr.find(coo);
+				map<int, IloExpr>::iterator it = nr.find(coo);
 				if (it == nr.end()) 
 					nr[coo] = IloExpr(env);
 				foreach (r, pos->second)
@@ -529,15 +490,16 @@ void cplex_smooth (const vector<int> &component, int id) {
 			// second pair ...
 			for (int i = 0; i < read_length && pos->first.second + i < clusters[c].single.size(); i++) {
 				int coo = pos->first.second + i;
-				auto it = nr.find(coo);
+				map<int, IloExpr>::iterator it = nr.find(coo);
 				if (it == nr.end()) 
 					nr[coo] = IloExpr(env);
 				foreach (r, pos->second)
 					nr[coo] += variables[make_pair(*r, c)];	
-			}
+			}			
 		}
-		foreach (pos, nr)
+		foreach (pos, nr) {
 			pos->second += (double)clusters[c].single[pos->first];
+		}
 
 		map<int, double> avg;
 		int	start_part = 0;
@@ -547,25 +509,13 @@ void cplex_smooth (const vector<int> &component, int id) {
 				while (i < clusters[c].single.size() && nr.find(i) != nr.end())
 					i++;
 
-				// L("%s\t", print_pt(clusters[c].partial).c_str());
-
 				int offset = 0;
 				int32_t sp, ep;
-				//assert(start_part!=-1);
 				sp = get_gene_position(clusters[c].partial, start_part), 
 				ep = get_gene_position(clusters[c].partial, i-1);
-				//L("Region %d..%d (%d..%d) (%'u..%'u)\t", start_part, i, sp, ep, g2G(clusters[c].partial.first->transcript, sp), g2G(clusters[c].partial.first->transcript, ep));
-				
-				//L("%d%d   ",is_multimap(g2G(clusters[c].partial.first->transcript, sp)),is_multimap(g2G(clusters[c].partial.first->transcript, ep)));
-				//if(print_pt(clusters[c].partial)=="ENSG00000135535.e7e8_")
-				//	for(unsigned int q=2372891821u;q<2372892226u;q++)
-				//		L("%d",is_multimap(q)); L("    ");
-
 				while (sp >= 0 && is_multimap(g2G(clusters[c].partial->transcript, sp))) sp--, offset++;
 				while (ep < clusters[c].partial->transcript->length() && 
 					is_multimap(g2G(clusters[c].partial->transcript, ep))) ep++;
-
-				//L("Enl to %d..%d\t", sp, ep);
 
 				int neighbourhood = 1.5 * read_length, steps;
 
@@ -585,13 +535,10 @@ void cplex_smooth (const vector<int> &component, int id) {
 					end_part_boundary += get_single_coverage(g2G(clusters[c].partial->transcript, j)), steps++;
 				end_part_boundary /= steps;
 
-				//E("part %d,%d of %d\n",start_part,i,clusters[c].single.size());
 				if (fabs(start_part_boundary) < 1e-6)
 					start_part_boundary = end_part_boundary;
 				if (fabs(end_part_boundary) < 1e-6)
 					end_part_boundary = start_part_boundary;
-
-				//L("%s st %.2lf %d ed %.2lf %d [%d %d]\n", print_pt(clusters[c].partial).c_str(), start_part_boundary, end_part_boundary, start_part, i, sp, ep);
 
 				for (int j = start_part; j < i; j++) {
 					avg[j] = start_part_boundary + 
@@ -603,33 +550,17 @@ void cplex_smooth (const vector<int> &component, int id) {
 			start_part = i;
 		}
 
-		/*foreach(pos,avg)
-			avg__[c][pos->first]=pos->second;*/
-
 		foreach (pos, nr) {
-			if (avg.find(pos->first) == avg.end()) {
-				E("-----> %d %d %d\n", pos->first, avg.size()==0?-1:avg.rbegin()->first, nr.size());
-				abort();
-			}
 			assert(avg.find(pos->first) != avg.end());
 			model.add(avg[pos->first] + d[ci] - pos->second >= 0);
 			model.add(avg[pos->first] - d[ci] - pos->second <= 0);
 		}
 
-		/*foreachidx (pos, posi, clusters[c].fatreads) {
-			if (avg.find(pos->first) == avg.end()) {
-				E("-----> %d %d %d\n", pos->first, avg.size()==0?-1:avg.rbegin()->first, clusters[c].fatreads.size());
-				abort();
-			}
-			assert(avg.find(pos->first) != avg.end());
-			model.add(avg[pos->first] + d[ci] - nr[posi] >= 0);
-			model.add(avg[pos->first] - d[ci] - nr[posi] <= 0);
-		}*/
 		foreach (n, nr) n->second.end();
 	}	
 	// SUM(Rij) = sizeof(R)
 	int fr = 0;
-	auto v = variables.begin();
+	map<pair<int, int>, IloIntVar>::iterator v = variables.begin();
 	while (v != variables.end()) {
 		IloExpr expr(env);
 		int read = v->first.first;
@@ -640,13 +571,6 @@ void cplex_smooth (const vector<int> &component, int id) {
 		fr++;
 		model.add(expr == fatreads[read].reads.size());
 		expr.end();
-	}
-
-	{
-		raii_lock _l(mtx_io);
-		//L("Set size %'d, fatreads %'d\n", component.size(), fr);
-		//L("%s", debug.c_str());
-		fflush(stdout);
 	}
 
 	try {
@@ -661,11 +585,11 @@ void cplex_smooth (const vector<int> &component, int id) {
 		
 		cplex.solve();
 		
-		{
-			raii_lock _l(mtx_io);
-			L("#CPLEX Status: %d; Optimum value: %.3lf; Memory: %'.2lfM; Instance: %s;\n", cplex.getCplexStatus(), cplex.getObjValue(), env.getTotalMemoryUsage()/(1024*1024.0), model_id);
-			fflush(stdout);
-		}
+		// {
+		// 	raii_lock _l(mtx_io);
+		// 	L("#CPLEX Status: %d; Optimum value: %.3lf; Memory: %'.2lfM; Instance: %s;\n", cplex.getCplexStatus(), cplex.getObjValue(), env.getTotalMemoryUsage()/(1024*1024.0), model_id);
+		// 	fflush(stdout);
+		// }
 
 		// update solution
 		foreach (var, variables) {
@@ -686,14 +610,14 @@ void cplex_smooth (const vector<int> &component, int id) {
 		del.end();
 	}
 	catch (IloException &ex) {
-		{
-			raii_lock _l(mtx_io);
-			string s = ex.getMessage();
-			s[s.size() - 1] = 0; // trim \n
-			L("#CPLEX Error: %s; Component size: %'d; Instance: %s; ", s.c_str(), component.size(), model_id);
-			fflush(stdout);
-		}
-		ex.end();
+		// {
+		// 	raii_lock _l(mtx_io);
+		// 	string s = ex.getMessage();
+		// 	s[s.size() - 1] = 0; // trim \n
+		// 	L("#CPLEX Error: %s; Component size: %'d; Instance: %s; Using heuristics instead ...", s.c_str(), component.size(), model_id);
+		// 	fflush(stdout);
+		// }
+		// ex.end();
 		heuristics_smooth(component, id);
 	}
 	env.end();
@@ -723,7 +647,6 @@ void *thread (void *arg) {
 			continue;
 
 		cplex_smooth(component, id);
-	//	heuristics_smooth(component, id, 1000);
 	}
 	return 0;
 }
@@ -761,7 +684,7 @@ void connected_components (void) {
 
 	// start threading!!
 	
-	int thread_count = min((int)sysconf(_SC_NPROCESSORS_ONLN) - 1, 20);
+	int thread_count = optThreads;
 	threads = new pthread_t[thread_count];
 	pthread_mutex_init(&mtx_access, 0);
 	pthread_mutex_init(&mtx_io, 0);
@@ -823,8 +746,7 @@ void update_solution (vector<struct read> &reads) {
 			fi->reads[i]->entries.clear();
 		discarded += no;
 	}
-	E("\t%'d discarded reads\n", discarded);
-	//	fclose(fo);
+	// E("\t%'d discarded reads\n", discarded);
 }
 
 void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read_length) {
@@ -837,21 +759,9 @@ void do_orman (const genome_annotation &ga, vector<struct read> &reads, int read
 	probabilistic_assign();
 	E("\t%'d out of %'d clusters selected\ndone in %d seconds!\n", n, clusters.size(), zaman_last());
 
-	E("Probabilistic assign ...\n");
-	
-	E("done in %d seconds!\n", zaman_last());
-
 	E("Connected component decomposition and CPLEX assignment ...\n");
 	connected_components();
 	update_solution(reads);
 	E("done in %d seconds!\n", zaman_last());
-
-	/*E("Plotting ... \n");
-	string s = print_stats();
-	FILE *fx = fopen("plots/script.gnuplot", "w");
-	fwrite(s.c_str(), 1, s.size(), fx);
-	fclose(fx);
-	system("/home/inumanag/Applications/usr/bin/gnuplot plots/script.gnuplot");
-	E("done in %d seconds!\n", zaman_last());*/
 }
 
