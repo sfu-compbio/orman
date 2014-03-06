@@ -115,12 +115,37 @@ void write_sam (const char *old_sam, const char *new_sam) {
 		sscanf(buffer, "%s", nam);
 		if (string(nam) != rev_name) { ore++; rev_name = string(nam); }
 		// TODO fix NH:i:...
+		
+		
 		if (i < single_maps.size() && line == single_maps[i].first) {
 			int l = strlen(buffer) - 1;
-			sprintf(buffer + l, "\t%s:Z:%s\n", gene_sam_flag, 
+			
+			int prevli = 0;
+			int fieldcnt = 0;
+			buffer[l] = '\t';
+			for (int li = 0; li < l + 1; li++) {
+				if (buffer[li] == '\t') {
+					fieldcnt++;
+					buffer[li] = 0;
+
+					if (fieldcnt == 1)
+						fprintf(fo, "%s", buffer);
+					else if (fieldcnt <= 11 || li - prevli < 2)
+						fprintf(fo, "\t%s", buffer + prevli);
+					else {
+						string tag = string(buffer + prevli, 2);
+						if (tag == "NH") 
+							fprintf(fo, "\tNH:i:1");
+						else if (tag != "CC" && tag != "CP" && tag != "HI")
+							fprintf(fo, "\t%s", buffer + prevli);
+					}
+					prevli = li + 1;
+				}
+			}
+			fprintf(fo, "\t%s:Z:%s\n", gene_sam_flag, 
 					single_maps[i].second ? single_maps[i].second->name.c_str() : "_"
-					);
-			fputs(buffer, fo);
+			);
+			// fputs(buffer, fo);
 			i++;
 			wr++;
 		}

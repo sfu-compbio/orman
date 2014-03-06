@@ -471,7 +471,8 @@ void cplex_smooth (const vector<int> &component, int id) {
 		int c = component[ci];
 		objective += d[ci]; // / avg;
 	}
-
+	model.add(IloMinimize(env, objective));
+	
 	// -D <= AV - NR <= D
 	for (int ci = 0; ci < component.size(); ci++) {
 		int c = component[ci];
