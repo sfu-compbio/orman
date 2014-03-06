@@ -1,6 +1,6 @@
 ===================================================================================================
 = ORMAN: Optimal Resolution of Ambiguous RNA-Seq Multi-mappings in the Presence of Novel Isoforms = 
-=                              Serious README for ORMAN version 1.1                               =
+=                              Serious README for ORMAN version 1.2                               =
 ===================================================================================================
 
 * Description *

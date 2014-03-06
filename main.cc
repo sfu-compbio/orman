@@ -229,7 +229,7 @@ int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
 	char buffer[MAX_BUFFER];
 
-	E("ORMAN v1.1 (C) 2013 Simon Fraser University. All rights reserved.\n");
+	E("ORMAN v1.2 (C) 2014 Simon Fraser University. All rights reserved.\n");
 	#ifdef LOGIFY
 		E("\tLog status: enabled\n");
 		flog = fopen(LOG_FILE, "w");
