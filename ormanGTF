@@ -1,0 +1,196 @@
+#!/usr/bin/perl
+# Copyright (c) 2012, 2013, Simon Fraser University
+# All rights reserved.
+# Redistribution and use in source and binary forms, with or without modification,
+# are permitted provided that the following conditions are met:
+# Redistributions of source code must retain the above copyright notice, this list
+# of conditions and the following disclaimer.
+# - Redistributions in binary form must reproduce the above copyright notice, this
+#   list of conditions and the following disclaimer in the documentation and/or other
+#   materials provided with the distribution.
+# - Neither the name of the Simon Fraser University nor the names of its contributors may be
+#   used to endorse or promote products derived from this software without specific
+#   prior written permission.
+# THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+# "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+# LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+# A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+# LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+# NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+# SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+##-------------------------------------------------------------------
+# This script reads a GTF file from standard input and writes
+# a modified GTF file required by ORMAN to standard output.
+#
+# Part of ORMAN package. See the documentation for more information.
+# Author: Nilgun Donmez
+##-------------------------------------------------------------------
+
+use strict;
+use warnings;
+
+my $numGenes = 1;
+my %geneHash;		# hashes the gene names
+my @geneInfo;		# holds the chromosome, strand and ensemble id for each gene
+my @transcripts;	# holds the transcript ids for each gene
+my @geneModels;		# holds the start and end of all exons
+my %isoforms;		# holds the known isoform models
+
+my $geneNo = 1;
+my $strand = "+";
+
+while(<STDIN>)
+{
+	my $ln = $_;
+	if($ln =~ /gene_id \"(.+?)\"; transcript_id \"(.+?)\"; /)
+	{
+		my $geneID = $1;
+		my $transID = $2;
+
+		my @parts = split(/\t/, $ln);
+		unless($parts[2] eq "exon")
+		{	next; }
+
+		my $chr = $parts[0];
+#		if($chr =~ /^chr/)
+#		{	$chr = substr($chr, 3); }
+					
+		$strand = $parts[6];
+		
+		if(defined $geneHash{$geneID})
+		{
+			$geneNo = $geneHash{$geneID};
+		}
+		else
+		{
+			$geneNo = $numGenes;
+			$numGenes++;
+			$geneHash{$geneID} = $geneNo;
+
+			push @{$geneInfo[$geneNo]}, $chr;
+			push @{$geneInfo[$geneNo]}, $strand;		
+			push @{$geneInfo[$geneNo]}, $geneID;
+			push @{$geneInfo[$geneNo]}, $parts[1];		# the label for the gene; e.g. pseudogene, protein_coding, etc
+		}
+
+		my @t1 = ($parts[3], $parts[4] + 1);			
+		push @{$geneModels[$geneNo]}, \@t1;		
+				
+		unless(defined $isoforms{$transID})
+		{	push @{$transcripts[$geneNo]}, $transID; }
+
+		my @t3 = ($parts[3], $parts[4]);
+		push @{$isoforms{$transID}}, \@t3;
+	}
+	else
+	{
+		die "Regex fail at line $ln \n";
+	}
+}
+
+print STDERR "Finished reading the GTF file\n";
+
+my @exonSt;
+my @exonEnd;
+
+for(my $g=1; $g<$numGenes; $g++)
+{
+	my $chr = $geneInfo[$g][0];
+	my $strand = $geneInfo[$g][1];
+		
+	my @sorted = sort {@{$a}[0] <=> @{$b}[0] || @{$a}[1] <=> @{$b}[1]} @{$geneModels[$g]};
+	
+	my %arrhash;
+	my $stlabel = 0;
+	my $endlabel = 1;
+	
+	for(my $i=0; $i<=$#sorted; $i++)
+	{
+		my $st = @{$sorted[$i]}[0];
+		my $end = @{$sorted[$i]}[1];
+		
+		$arrhash{$st} = $stlabel;
+		unless(defined $arrhash{$end} and $arrhash{$end} eq $stlabel)
+		{
+			$arrhash{$end} = $endlabel;			
+		}
+		
+		for(my $j=0; $j<=$#sorted; $j++)
+		{
+			if($i == $j)
+			{	next; }
+			
+			if(@{$sorted[$j]}[1] > $st and @{$sorted[$j]}[1] < $end)	# this exon's end is overlapping with our current exon
+			{
+				$arrhash{ @{$sorted[$j]}[1] } = $stlabel;				
+			}	
+			
+			if(@{$sorted[$j]}[0] >= $end)	# no need to go further
+			{	last; }
+		}
+	}
+	
+	my $pos = 0;
+	my @arr;			
+	foreach my $k (sort {$a <=> $b} keys %arrhash)
+	{
+		$arr[$pos][0] = $k;
+		$arr[$pos][1] = $arrhash{$k};
+		$pos++;		
+	}
+		
+	my $numEx = 0;	
+	for(my $i=0; $i<$pos-1; $i++)
+	{
+		if($arr[$i][1] eq $endlabel and $arr[$i+1][1] eq $stlabel)			# this is an intron
+		{	next; }
+		elsif($arr[$i][1] eq $endlabel and $arr[$i+1][1] eq $endlabel)	
+		{
+			for(my $j=0; $j<$pos; $j++)
+			{	
+				print STDERR $arr[$j][0], " ", $arr[$j][1], "\n";
+			}			
+			die "Fatal error: exon boundaries do not make sense\n"; 
+		}
+		else
+		{
+			my $a = $arr[$i][0];
+			my $b = $arr[$i+1][0] - 1;		# make the end inclusive, so that the exons will never overlap					
+
+			push @{$exonSt[$g]}, $a;
+			push @{$exonEnd[$g]}, $b;
+			
+			$numEx += 1;
+		}
+	}
+			
+	my $numIso = scalar(@{$transcripts[$g]});														
+	for(my $i=0; $i<$numIso; $i++)
+	{
+		my $transID = $transcripts[$g][$i];
+		my @sorted = sort {@{$a}[0] <=> @{$b}[0]} @{$isoforms{$transID}};	# exons in the same isoform should never be overlapping
+		my $k = 0;
+		my $num = 0;
+		foreach my $item (@sorted)
+		{
+			while($k<$numEx)
+			{
+				if($exonSt[$g][$k] > @{$item}[1])	# proceed to the next exon in isoform
+				{	last; }								
+				
+				if(@{$item}[0] <= $exonSt[$g][$k] and $exonEnd[$g][$k] <= @{$item}[1])		# the exon contains the partial exon
+				{
+					$num += 1;
+					print $chr, "\t", $geneInfo[$g][3], "\texon\t", $exonSt[$g][$k], "\t", $exonEnd[$g][$k], "\t.\t", $strand;
+					print "\t.\tgene_id \"", $geneInfo[$g][2], "\"; transcript_id \"", $transID, "\"; exon_number \"", $num, "\"; partial_ex \"", $k+1, "\"; \n"; 					
+				}				
+				$k += 1;
+			}
+		}			
+	}							
+}
+
