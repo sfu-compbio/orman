@@ -1,0 +1,17 @@
+---
+
+### site serving configuration ###
+exclude: [CNAME, README.md, .gitignore]
+permalink: / ## disables post output
+timezone: null
+lsi: false
+markdown: kramdown
+highlighter: pygments
+
+
+### content configuration ###
+name:		 "ORMAN"
+title:       "ORMAN: Optimal Resolution of Ambiguous RNA-Seq Multi-mappings in the Presence of Novel Isoforms"
+keywords:    "rna-seq, sam, bam, orman, multi-reads"
+description: "A tool for resolving multi-mappings in RNA-Seq mapping files"
+source_link: "http://sfu-compbio.github.io/orman/"

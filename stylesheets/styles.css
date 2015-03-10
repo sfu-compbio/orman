@@ -43,7 +43,7 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 p, ul, ol, table, dl {
-  margin:0 0 22px;
+  margin:0 0 10px;
 }
 
 h1, h2, h3 {
@@ -73,6 +73,7 @@ h3 {
 h4, h5, h6 {
 	font-family: Arvo, Monaco, serif;
 	font-weight: 700;
+  margin-top: 20px;
 }
 
 a {
@@ -169,13 +170,14 @@ code, pre {
 }
 
 pre {
-	padding: 4px 12px;
+	padding: 4px 10px;
   background: #FDFEFB;
   border-radius:4px;
   border:1px solid #D7D8C8;
   overflow: auto;
   overflow-y: hidden;
-	margin-bottom: 32px;
+  margin-top: 0px;
+  margin-bottom: 10px
 }
 
 
@@ -233,7 +235,9 @@ header {
 }
 
 p.header {
-	font-size: 16px;
+	font-size: 15px;
+  font-style: italic;
+  margin-top: -15px;
 }
 
 h1.header {
@@ -284,7 +288,6 @@ header li {
 
 	-webkit-box-shadow: inset 0px 1px 1px 0 rgba(233,2,38, 1);
 	box-shadow: inset 0px 1px 1px 0 rgba(233,2,38, 1);
-
 }
 
 header li:hover {
@@ -295,6 +298,10 @@ header li:hover {
   background: -o-linear-gradient(top, #C3001D 0%,#950119 100%);
   background: -ms-linear-gradient(top, #C3001D 0%,#950119 100%);
   background: linear-gradient(top, #C3001D 0%,#950119 100%);
+}
+
+header li > a {
+  font-weight: normal;
 }
 
 a.buttons {
@@ -315,6 +322,45 @@ a.buttons:hover {
 	text-decoration: none;
 }
 
+#releaselog ul {
+    list-style: none;
+}
+
+#releaselog ul ul {
+    list-style: disc;
+}
+
+#arguments > ul {
+    list-style: none;
+    padding:0;
+    margin:0;
+}
+
+#arguments > ul > li { 
+    padding-left: 1em; 
+}
+
+#arguments > ul > li:before {
+  content: "v"; 
+  font-family:"Wingdings"; 
+  padding: 0;
+  margin: 0;
+}
+
+#arguments > ul > li > p:first-child {
+  display: inline;
+  padding-left: 15px;
+  font-weight: bold;
+}
+
+#arguments > ul > li > ul {
+  margin-left: 30px;
+}
+
+#arguments > ul > li > p {
+  padding-left: 30px;
+}
+
 
 /* Section - for main page content */
 
@@ -333,6 +379,10 @@ footer {
   position:fixed;
   bottom:10px;
 	padding-left: 50px;
+}
+
+li > p {
+  margin: 5px 0 5px 0;
 }
 
 @media print, screen and (max-width: 960px) {
@@ -358,6 +408,11 @@ footer {
     padding-right:320px;
   }
 
+  header ul.menu li {
+    display: inline;
+    list-style-type: none;
+  }
+
   section {
     padding:20px 84px 20px 50px;
     margin:0 0 20px;
@@ -367,7 +422,7 @@ footer {
     display:inline;
   }
 
-  header ul {
+  header ul.downloads {
     position:absolute;
     right:130px;
     top:84px;
