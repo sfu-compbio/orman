@@ -1,6 +1,6 @@
 # ORMAN
 a.k.a. <i><b>O</b>ptimal <b>R</b>esolution of <b>M</b>ultimapping <b>A</b>mbiguity of R<b>N</b>A-Seq Reads</i>
------
+<hr />
 
 # Introduction
 
