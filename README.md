@@ -15,7 +15,7 @@ Just clone our repository and issue `make` command:
 	git clone https://github.com/sfu-compbio/orman.git
 	cd orman && make -j
 
-This will work only if you have your CPLEX installed in `/opt/ibm/cplex12_5_1`. If not, keep reading, or just try out our x86-64 [binary](https://github.com/sfu-compbio/orman/tarball/binary) (compiled on CentOS 6.x).
+This will work only if you have your CPLEX installed in `/opt/ibm/cplex12_5_1`. If not, keep reading, or just try out our x86-64 [binary](https://github.com/sfu-compbio/orman/tarball/binary) (compiled on CentOS 7.x).
 
 ### How do I get CPLEX?
 
