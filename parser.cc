@@ -38,6 +38,8 @@
 #include <cstdarg>
 using namespace std;
 
+extern int optSingleEndedMode;
+
 typedef genome_annotation::transcript transcript;
 typedef genome_annotation::exon exon;
 static string S (const char* f, ...) {
@@ -244,8 +246,9 @@ PTsp get_partial_transcript (transcript *t,
 	bool v1 = is_valid_read(part1, exon1, start1);
 	bool v2 = is_valid_read(part2, exon2, start2);
 	if (!v1) return 0;
-	int weight = get_single_weight(t, exon1, indel1) + 
-				 v2 ? get_single_weight(t, exon2, indel2) : 1000000;
+	int weight = get_single_weight(t, exon1, indel1);
+	if (!optSingleEndedMode) 
+		weight += v2 ? get_single_weight(t, exon2, indel2) : 1000000;
 	if (!v2) start2 = 0;
 
 	// indels, exons are sorted; detect them
@@ -321,7 +324,7 @@ void parse_read (const read_entry_key &rk, const read_entry_value &rv, set<read_
 	map<transcript*, vector<exon*> > candidates1, candidates2;
 	makecand(rv.part1, rk.chr1, candidates1);
 	makecand(rv.part2, rk.chr2, candidates2);
-	int start1, start2;
+	int start1 = 0, start2 = 0;
 	vector<exon*> dummy;
 	foreach (ci1, candidates1) {
 		bool no_null = false;
@@ -448,8 +451,12 @@ void parse_sam (const char *sam_file) {
 			// if there are no valid PTs, discard
 			else {
 				foreach (i, idx) { // crappy?! add ALL!
-					if (i->second.line1 >= 0) crappy_reads.push_back(i->second.line1);
-					if (i->second.line2 >= 0) crappy_reads.push_back(i->second.line2);
+					if (i->second.line1 >= 0) {
+						crappy_reads.push_back(i->second.line1);
+					}
+					if (i->second.line2 >= 0) {
+						crappy_reads.push_back(i->second.line2);
+					}
 				}
 
 				// coverage
@@ -481,7 +488,7 @@ void parse_sam (const char *sam_file) {
 		}
 
 		// is it first mate?
-		if ((sam_flag & 0x8) || (sam_flag & 0x40)) {
+		if (optSingleEndedMode || ((sam_flag & 0x8) || (sam_flag & 0x40))) {
 			read_entry_key k(chr1, sam_pos,   
 							 chr2, sam_pnext,    
 							 abs(sam_tlen), sam_flag & 0x100); // not primary alignment

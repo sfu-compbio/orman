@@ -112,7 +112,6 @@ void initialize_structures (vector<struct read> &reads) {
 	foreach (ri, reads)
 		foreach (re, ri->entries) {
 			partials.insert(re->partial);
-	
 		}
 	clusters.resize(partials.size());
 

@@ -54,6 +54,7 @@ FILE *flog;
 #endif
 
 int optThreads = 1;
+int optSingleEndedMode = 0;
 int read_length = 0;
 const char *gene_sam_flag    = "YG";
 const char *partial_sam_flag = "YP";
@@ -191,15 +192,16 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam) {
 		{ "gtf",  	 1, NULL, 'g' },
 		{ "sam",	 1, NULL, 's' },
 		{ "threads", 1, NULL, 't' },
+		{ "single-end", 0, NULL, '1' },
 		{ NULL,     0, NULL,  0  }
 	};
-	const char *short_opt = "hg:s:t:";
+	const char *short_opt = "hg:s:t:1";
 	do {
 		opt = getopt_long (argc, argv, short_opt, long_opt, NULL);
 		switch (opt) {
 			case 'h':
-				E("Usage: orman -t [thread count] -g [gtf file] -s [sam file] [output file]");
-				E("Please check README.txt or visit http://orman.sf.net for the usage explanation.");
+				E("Usage: orman -t [thread count] -g [gtf file] -s [sam file] [output file]\n");
+				E("Please check README.md or visit https://github.com/sfu-compbio/orman for the usage explanation.\n");
 				exit(0);
 			case 'g':
 				strncpy(gtf, optarg, MAX_BUFFER);
@@ -209,6 +211,9 @@ void parse_opt (int argc, char **argv, char *gtf, char *sam, char *newsam) {
 				break;
 			case 's':
 				strncpy(sam, optarg, MAX_BUFFER);
+				break;
+			case '1':
+				optSingleEndedMode = 1;
 				break;
 			case -1:
 				break;
@@ -234,7 +239,7 @@ int main (int argc, char **argv) {
 	setlocale(LC_ALL, "");
 	char buffer[MAX_BUFFER];
 
-	E("ORMAN v1.2 (C) 2014 Simon Fraser University. All rights reserved.\n");
+	E("ORMAN v1.3 (C) 2014 Simon Fraser University. All rights reserved.\n");
 	#ifdef LOGIFY
 		E("\tLog status: enabled\n");
 		flog = fopen(LOG_FILE, "w");
